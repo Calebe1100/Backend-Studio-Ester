@@ -7,7 +7,7 @@ export function createApp() {
   const app = express();
 
   const allowedOrigins = [
-    process.env.FRONTEND_URL,   // ex: https://ana-ester.vercel.app
+    process.env.FRONTEND_URL,   // ex: https://studio-ester.vercel.app
     'http://localhost:3000',
   ].filter(Boolean) as string[];
 
