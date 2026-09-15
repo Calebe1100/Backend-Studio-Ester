@@ -1,5 +1,5 @@
 import { Pool } from 'pg';
-import { comparePassword } from '../lib/crypto';
+import { comparePassword, hashPassword } from '../lib/crypto';
 import {
   generateAccessToken,
   generateRefreshToken,
@@ -203,4 +203,47 @@ export async function createPasswordResetToken(
   );
 
   return { token, userId: user.id };
+}
+
+/**
+ * Consome token de recuperação e define nova senha.
+ */
+export async function resetPassword(
+  token: string,
+  newPassword: string,
+  pool?: Pool
+): Promise<void> {
+  const db = resolvePool(pool);
+
+  if (!newPassword || newPassword.length < 8) {
+    throw Object.assign(new Error('A senha deve ter pelo menos 8 caracteres.'), {
+      statusCode: 400,
+    });
+  }
+
+  const tokenHash = hashToken(token);
+  const result = await db.query<{ id: string; user_id: string; expires_at: Date; used_at: Date | null }>(
+    `SELECT id, user_id, expires_at, used_at
+     FROM password_reset_tokens
+     WHERE token_hash = $1`,
+    [tokenHash]
+  );
+
+  const row = result.rows[0];
+  if (!row || row.used_at) {
+    throw Object.assign(new Error('Token de recuperação inválido.'), { statusCode: 400 });
+  }
+  if (new Date(row.expires_at) < new Date()) {
+    throw Object.assign(new Error('Token de recuperação expirado.'), { statusCode: 400 });
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+  await db.query(
+    `UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1`,
+    [row.user_id, passwordHash]
+  );
+  await db.query(
+    `UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1`,
+    [row.id]
+  );
 }

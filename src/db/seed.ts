@@ -61,6 +61,54 @@ async function seed() {
     console.log(`  📧  Email de login para o salão configurado em: ${SALON_EMAIL}`);
   }
 
+  // 3. Catálogo inicial (só se ainda não houver serviços)
+  const servicesCount = await pool.query<{ count: string }>(
+    'SELECT COUNT(*)::text AS count FROM services WHERE salon_id = $1',
+    [salonId]
+  );
+  if (Number(servicesCount.rows[0].count) === 0) {
+    const services = [
+      { name: 'Corte feminino', duration: 60, price: 120 },
+      { name: 'Escova', duration: 45, price: 80 },
+      { name: 'Manicure', duration: 45, price: 50 },
+      { name: 'Coloração', duration: 120, price: 250 },
+    ];
+    const serviceIds: string[] = [];
+    for (const svc of services) {
+      const inserted = await pool.query<{ id: string }>(
+        `INSERT INTO services (salon_id, name, duration, price)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id`,
+        [salonId, svc.name, svc.duration, svc.price]
+      );
+      serviceIds.push(inserted.rows[0].id);
+    }
+    console.log(`  ✅ ${services.length} serviços iniciais criados`);
+
+    const pros = [
+      { name: 'Camila Souza', start: '09:00', end: '18:00', serviceIndexes: [0, 1, 3] },
+      { name: 'Juliana Alves', start: '10:00', end: '19:00', serviceIndexes: [1, 2] },
+    ];
+    for (const pro of pros) {
+      const inserted = await pool.query<{ id: string }>(
+        `INSERT INTO professionals (salon_id, name, work_start, work_end)
+         VALUES ($1, $2, $3::time, $4::time)
+         RETURNING id`,
+        [salonId, pro.name, pro.start, pro.end]
+      );
+      for (const idx of pro.serviceIndexes) {
+        await pool.query(
+          `INSERT INTO professional_services (professional_id, service_id)
+           VALUES ($1, $2)`,
+          [inserted.rows[0].id, serviceIds[idx]]
+        );
+      }
+    }
+    console.log(`  ✅ ${pros.length} profissionais iniciais criados`);
+  } else {
+    console.log('  ℹ️  Serviços já existem — catálogo inicial ignorado');
+  }
+
   console.log('✅ Seed concluído.');
   await closePool();
 }
