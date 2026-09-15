@@ -1,0 +1,32 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: studio_ester_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ester
+      POSTGRES_PASSWORD: ester123
+      POSTGRES_DB: studio_ester
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  postgres_test:
+    image: postgres:16-alpine
+    container_name: studio_ester_db_test
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ester
+      POSTGRES_PASSWORD: ester123
+      POSTGRES_DB: studio_ester_test
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata_test:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+  pgdata_test:
