@@ -2,7 +2,8 @@
  * Migration inicial — cria todas as tabelas do sistema.
  * Execute com: npm run migrate
  */
-import { getPool, closePool } from './pool';
+import { env } from '../config/env';
+import { getPool, closePool, waitForDb } from './pool';
 
 const SQL = `
 -- Salão único e fixo
@@ -118,8 +119,35 @@ CREATE INDEX IF NOT EXISTS idx_appointments_salon_starts
   ON appointments(salon_id, starts_at);
 `;
 
+function logDatabaseTarget(databaseUrl: string): void {
+  try {
+    const parsed = new URL(databaseUrl);
+    const user = decodeURIComponent(parsed.username || '');
+    const db = parsed.pathname.replace(/^\//, '');
+    console.log(
+      `🔗 Destino: ${parsed.hostname}:${parsed.port || '5432'}/${db} (user: ${user || 'VAZIO'})`,
+    );
+
+    if (!user || !db) {
+      console.error('❌ DATABASE_URL malformada — usuário ou database vazios.');
+      console.error(
+        '   No Railway (serviço do backend), use referência cruzada:',
+      );
+      console.error('   DATABASE_URL=${{Postgres.DATABASE_URL}}');
+      process.exit(1);
+    }
+  } catch {
+    console.error('❌ DATABASE_URL inválida.');
+    process.exit(1);
+  }
+}
+
 async function migrate() {
+  logDatabaseTarget(env.databaseUrl);
+
   const pool = getPool();
+  console.log('⏳ Aguardando conexão com o banco...');
+  await waitForDb(pool);
   console.log('⏳ Executando migration...');
   await pool.query(SQL);
   console.log('✅ Migration concluída.');
