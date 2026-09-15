@@ -6,8 +6,10 @@ import protectedRoutes from './routes/protected';
 export function createApp() {
   const app = express();
 
+  // FRONTEND_URL pode ser uma URL ou várias separadas por vírgula
   const allowedOrigins = [
-    process.env.FRONTEND_URL,   // ex: https://studio-ester.vercel.app
+    ...(process.env.FRONTEND_URL ?? '').split(',').map((s) => s.trim()),
+    'https://app-studio-ester-rodrigues.vercel.app',
     'https://app-studio-ester.vercel.app',
     'http://localhost:3000',
   ].filter(Boolean) as string[];
@@ -16,10 +18,11 @@ export function createApp() {
     cors({
       origin: (origin, callback) => {
         // Permite requisições sem origin (ex: Postman, Railway health checks)
+        // callback(null, false) em vez de Error — Error vira 500 sem headers CORS
         if (!origin || allowedOrigins.includes(origin)) {
           callback(null, true);
         } else {
-          callback(new Error(`CORS: origin não permitida — ${origin}`));
+          callback(null, false);
         }
       },
       credentials: true,
