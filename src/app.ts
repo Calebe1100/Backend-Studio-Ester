@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import authRoutes from './routes/auth';
 import domainRoutes from './routes/domain';
+import publicRoutes from './routes/public';
 
 export function createApp() {
   const app = express();
@@ -53,6 +54,7 @@ export function createApp() {
 
   // Rotas
   app.use('/api/auth', authRoutes);
+  app.use('/api/public', publicRoutes);
   app.use('/api', domainRoutes);
 
   // Handler de erros genérico

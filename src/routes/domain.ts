@@ -16,11 +16,33 @@ function salonId(req: Request): string {
   return req.user!.salonId;
 }
 
-// ── Me ──────────────────────────────────────────
+// ── Me / perfil do cliente ──────────────────────
 router.get(
   '/me',
   asyncHandler(async (req, res) => {
     res.json({ user: req.user });
+  }),
+);
+
+router.get(
+  '/me/profile',
+  requireRole('cliente'),
+  asyncHandler(async (req, res) => {
+    const profile = await clients.getClientByUserId(salonId(req), req.user!.sub);
+    if (!profile) {
+      res.status(404).json({ error: 'Perfil de cliente não encontrado.' });
+      return;
+    }
+    res.json({ profile });
+  }),
+);
+
+router.put(
+  '/me/profile',
+  requireRole('cliente'),
+  asyncHandler(async (req, res) => {
+    const profile = await clients.updateClientProfile(salonId(req), req.user!.sub, req.body ?? {});
+    res.json({ profile });
   }),
 );
 
@@ -67,7 +89,7 @@ router.patch(
 // ── Professionals (dono) ────────────────────────
 router.get(
   '/professionals',
-  requireRole('dono', 'recepcao', 'profissional'),
+  requireRole('dono', 'recepcao', 'profissional', 'cliente'),
   asyncHandler(async (req, res) => {
     res.json({ professionals: await professionals.listProfessionals(salonId(req)) });
   }),
@@ -111,7 +133,7 @@ router.patch(
 // ── Services (list: operação; write: dono) ──────
 router.get(
   '/services',
-  requireRole('dono', 'recepcao', 'profissional'),
+  requireRole('dono', 'recepcao', 'profissional', 'cliente'),
   asyncHandler(async (req, res) => {
     res.json({ services: await services.listServices(salonId(req)) });
   }),
@@ -151,15 +173,15 @@ router.patch(
 // ── Appointments / agenda ───────────────────────
 router.get(
   '/appointments',
-  requireRole('dono', 'recepcao', 'profissional'),
+  requireRole('dono', 'recepcao', 'profissional', 'cliente'),
   asyncHandler(async (req, res) => {
     const date = typeof req.query.date === 'string' ? req.query.date : undefined;
     const from = typeof req.query.from === 'string' ? req.query.from : undefined;
     const to = typeof req.query.to === 'string' ? req.query.to : undefined;
     let professionalId =
       typeof req.query.professionalId === 'string' ? req.query.professionalId : undefined;
+    let clientId: string | undefined;
 
-    // Profissional só vê a própria agenda (default)
     if (req.user!.role === 'profissional') {
       const all = await professionals.listProfessionals(salonId(req));
       const mine = all.find((p) => p.userId === req.user!.sub);
@@ -170,12 +192,22 @@ router.get(
       professionalId = mine.id;
     }
 
+    if (req.user!.role === 'cliente') {
+      const mine = await clients.getClientByUserId(salonId(req), req.user!.sub);
+      if (!mine) {
+        res.json({ appointments: [] });
+        return;
+      }
+      clientId = mine.id;
+    }
+
     res.json({
       appointments: await appointments.listAppointments(salonId(req), {
         date,
         from,
         to,
         professionalId,
+        clientId,
       }),
     });
   }),
@@ -192,10 +224,21 @@ router.post(
 
 router.post(
   '/appointments/book',
-  requireRole('dono', 'recepcao', 'profissional'),
+  requireRole('dono', 'recepcao', 'profissional', 'cliente'),
   asyncHandler(async (req, res) => {
-    const { name, phone, professionalId, serviceId, date, start, notes } = req.body;
-    const client = await clients.findOrCreateClient(salonId(req), { name, phone });
+    const { name, phone, email, professionalId, serviceId, date, start, notes } = req.body;
+
+    let client;
+    if (req.user!.role === 'cliente') {
+      client = await clients.getClientByUserId(salonId(req), req.user!.sub);
+      if (!client) {
+        res.status(400).json({ error: 'Perfil de cliente não encontrado.' });
+        return;
+      }
+    } else {
+      client = await clients.findOrCreateClient(salonId(req), { name, phone, email });
+    }
+
     const appointment = await appointments.createAppointment(salonId(req), {
       clientId: client.id,
       professionalId,

@@ -104,7 +104,13 @@ function assertWithinWorkHours(
 
 export async function listAppointments(
   salonId: string,
-  opts: { date?: string; professionalId?: string; from?: string; to?: string } = {},
+  opts: {
+    date?: string;
+    professionalId?: string;
+    clientId?: string;
+    from?: string;
+    to?: string;
+  } = {},
   pool?: Pool,
 ): Promise<AppointmentDTO[]> {
   const clauses = ['salon_id = $1'];
@@ -131,6 +137,10 @@ export async function listAppointments(
   if (opts.professionalId) {
     params.push(opts.professionalId);
     clauses.push(`professional_id = $${params.length}`);
+  }
+  if (opts.clientId) {
+    params.push(opts.clientId);
+    clauses.push(`client_id = $${params.length}`);
   }
 
   const result = await db(pool).query<AppointmentRow>(
