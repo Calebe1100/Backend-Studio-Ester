@@ -22,12 +22,17 @@ CREATE TABLE IF NOT EXISTS users (
   name          TEXT NOT NULL,
   email         TEXT NOT NULL,
   password_hash TEXT NOT NULL,
-  role          TEXT NOT NULL CHECK (role IN ('dono','recepcao','profissional')),
+  role          TEXT NOT NULL CHECK (role IN ('dono','recepcao','profissional','cliente')),
   active        BOOLEAN NOT NULL DEFAULT TRUE,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(email)
 );
+
+-- Bancos existentes: inclui papel 'cliente'
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users ADD CONSTRAINT users_role_check
+  CHECK (role IN ('dono','recepcao','profissional','cliente'));
 
 -- Refresh tokens persistidos (JWT stateful para logout seguro)
 CREATE TABLE IF NOT EXISTS refresh_tokens (
@@ -87,12 +92,26 @@ CREATE TABLE IF NOT EXISTS professional_services (
 CREATE TABLE IF NOT EXISTS clients (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   salon_id    UUID NOT NULL REFERENCES salons(id) ON DELETE CASCADE,
+  user_id     UUID REFERENCES users(id) ON DELETE SET NULL,
   name        TEXT NOT NULL,
   phone       TEXT,
+  email       TEXT,
   notes       TEXT,
   active      BOOLEAN NOT NULL DEFAULT TRUE,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Bancos já existentes: garante colunas
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS email TEXT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE SET NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_salon_email
+  ON clients (salon_id, lower(email))
+  WHERE email IS NOT NULL AND email <> '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_user_id
+  ON clients (user_id)
+  WHERE user_id IS NOT NULL;
 
 -- Agendamentos
 CREATE TABLE IF NOT EXISTS appointments (

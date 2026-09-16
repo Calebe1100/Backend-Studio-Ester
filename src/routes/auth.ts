@@ -1,5 +1,11 @@
 import { Router, Request, Response } from 'express';
-import { login, refresh, logout, createPasswordResetToken } from '../services/authService';
+import {
+  login,
+  refresh,
+  logout,
+  createPasswordResetToken,
+  resetPassword,
+} from '../services/authService';
 import { sendPasswordResetEmail } from '../lib/mailer';
 
 const router = Router();
@@ -92,6 +98,27 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
     res.status(200).json({ message: 'Se o e-mail existir, você receberá as instruções.' });
   } catch {
     res.status(200).json({ message: 'Se o e-mail existir, você receberá as instruções.' });
+  }
+});
+
+/**
+ * POST /api/auth/reset-password
+ * Body: { token: string, password: string }
+ */
+router.post('/reset-password', async (req: Request, res: Response) => {
+  const { token, password } = req.body ?? {};
+
+  if (!token || !password) {
+    res.status(400).json({ error: 'Token e nova senha são obrigatórios' });
+    return;
+  }
+
+  try {
+    await resetPassword(token, password);
+    res.status(200).json({ message: 'Senha atualizada com sucesso.' });
+  } catch (err: unknown) {
+    const e = err as { statusCode?: number; message: string };
+    res.status(e.statusCode ?? 500).json({ error: e.message });
   }
 });
 
