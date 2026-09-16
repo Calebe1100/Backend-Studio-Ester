@@ -7,7 +7,7 @@
 import bcrypt from 'bcrypt';
 import { getPool, closePool } from './pool';
 
-const SALON_NAME = process.env.SALON_NAME ?? 'Studio Ester';
+const SALON_NAME = process.env.SALON_NAME ?? 'Studio Ana Ester';
 const SALON_EMAIL = process.env.SALON_EMAIL ?? 'contato@studioester.com.br';
 const OWNER_NAME = process.env.OWNER_NAME ?? 'Ester';
 const OWNER_EMAIL = process.env.OWNER_EMAIL ?? 'ester@studioester.com.br';

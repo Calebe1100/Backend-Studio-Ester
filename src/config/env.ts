@@ -52,7 +52,18 @@ export const env = {
     pass: process.env.SMTP_PASS ?? '',
   },
   salon: {
-    name: process.env.SALON_NAME ?? 'Studio Ester',
+    name: process.env.SALON_NAME ?? 'Studio Ana Ester',
     email: process.env.SALON_EMAIL ?? '',
+  },
+  vapid: {
+    publicKey: process.env.VAPID_PUBLIC_KEY ?? '',
+    privateKey: process.env.VAPID_PRIVATE_KEY ?? '',
+    subject: process.env.VAPID_SUBJECT ?? 'mailto:contato@studioester.com.br',
+  },
+  whatsapp: {
+    token: process.env.WHATSAPP_TOKEN ?? '',
+    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID ?? '',
+    templateName: process.env.WHATSAPP_TEMPLATE_NAME ?? 'nova_reserva',
+    templateLang: process.env.WHATSAPP_TEMPLATE_LANG ?? 'pt_BR',
   },
 };
