@@ -102,6 +102,29 @@ function assertWithinWorkHours(
   }
 }
 
+function assertNotInPast(startsAt: Date): void {
+  if (startsAt.getTime() < Date.now()) {
+    throw new HttpError(400, 'Não é possível agendar um horário no passado.');
+  }
+}
+
+/** Transições permitidas (espelha o frontend). */
+const NEXT_STATUSES: Record<AppointmentStatus, AppointmentStatus[]> = {
+  agendado: ['confirmado', 'em_atendimento', 'concluido', 'cancelado', 'nao_compareceu'],
+  confirmado: ['em_atendimento', 'concluido', 'cancelado', 'nao_compareceu'],
+  em_atendimento: ['concluido', 'cancelado'],
+  concluido: [],
+  cancelado: [],
+  nao_compareceu: [],
+};
+
+function assertValidTransition(from: AppointmentStatus, to: AppointmentStatus): void {
+  if (from === to) return;
+  if (!NEXT_STATUSES[from].includes(to)) {
+    throw new HttpError(400, `Não é possível alterar o status de "${from}" para "${to}".`);
+  }
+}
+
 export async function listAppointments(
   salonId: string,
   opts: {
@@ -187,6 +210,7 @@ export async function createAppointment(
 
   const startsAt = spLocalToDate(input.date, input.start);
   const endsAt = spLocalToDate(input.date, end);
+  assertNotInPast(startsAt);
   await assertNoOverlap(professional.id, startsAt, endsAt, undefined, pool);
 
   const result = await db(pool).query<AppointmentRow>(
@@ -251,6 +275,14 @@ export async function updateAppointment(
 
   const startsAt = spLocalToDate(input.date, input.start);
   const endsAt = spLocalToDate(input.date, end);
+
+  const existingMapped = mapAppointment(existing.rows[0]);
+  const scheduleChanged =
+    existingMapped.date !== input.date || existingMapped.start !== input.start;
+  if (scheduleChanged) {
+    assertNotInPast(startsAt);
+  }
+
   await assertNoOverlap(professional.id, startsAt, endsAt, id, pool);
 
   // Snapshot só muda se o serviço for trocado
@@ -301,13 +333,24 @@ export async function setAppointmentStatus(
   if (!APPOINTMENT_STATUSES.includes(status as AppointmentStatus)) {
     throw new HttpError(400, 'Status inválido.');
   }
+  const next = status as AppointmentStatus;
+
+  const existing = await db(pool).query<AppointmentRow>(
+    `SELECT id, client_id, professional_id, service_id, starts_at, ends_at,
+            status, notes, service_price_snapshot, service_duration_snapshot
+     FROM appointments WHERE id = $1 AND salon_id = $2`,
+    [id, salonId],
+  );
+  if (!existing.rows[0]) throw new HttpError(404, 'Agendamento não encontrado.');
+
+  assertValidTransition(existing.rows[0].status, next);
+
   const result = await db(pool).query<AppointmentRow>(
     `UPDATE appointments SET status = $3, updated_at = NOW()
      WHERE id = $1 AND salon_id = $2
      RETURNING id, client_id, professional_id, service_id, starts_at, ends_at,
                status, notes, service_price_snapshot, service_duration_snapshot`,
-    [id, salonId, status],
+    [id, salonId, next],
   );
-  if (!result.rows[0]) throw new HttpError(404, 'Agendamento não encontrado.');
   return mapAppointment(result.rows[0]);
 }

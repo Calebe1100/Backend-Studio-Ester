@@ -56,6 +56,13 @@ function assertEmail(email: string | null, required: boolean) {
 
 const CLIENT_SELECT = `id, name, phone, email, notes, active, user_id`;
 
+export const CLIENT_TEMPORARY_PASSWORD = 'Cliente@123';
+
+export type CreateClientResult = {
+  client: ClientDTO;
+  temporaryPassword?: string;
+};
+
 export async function listClients(salonId: string, pool?: Pool): Promise<ClientDTO[]> {
   const result = await db(pool).query<ClientRow>(
     `SELECT ${CLIENT_SELECT}
@@ -71,11 +78,54 @@ export async function createClient(
   salonId: string,
   input: { name: string; phone?: string; email?: string; notes?: string; userId?: string | null },
   pool?: Pool,
-): Promise<ClientDTO> {
+): Promise<CreateClientResult> {
   const name = input.name?.trim() ?? '';
   if (name.length < 2) throw new HttpError(400, 'Informe o nome do cliente.');
   const email = normalizeEmail(input.email);
   assertEmail(email, false);
+
+  // Com e-mail: cria acesso (user role=cliente) + cliente com senha temporária
+  if (email && !input.userId) {
+    const existingUser = await db(pool).query(
+      'SELECT id FROM users WHERE lower(email) = $1 LIMIT 1',
+      [email],
+    );
+    if (existingUser.rows[0]) {
+      throw new HttpError(409, 'Este e-mail já possui cadastro. Peça ao cliente para fazer login.');
+    }
+
+    const passwordHash = await hashPassword(CLIENT_TEMPORARY_PASSWORD);
+    const client = await db(pool).connect();
+    try {
+      await client.query('BEGIN');
+      const userResult = await client.query<{ id: string }>(
+        `INSERT INTO users (salon_id, name, email, password_hash, role)
+         VALUES ($1, $2, $3, $4, 'cliente')
+         RETURNING id`,
+        [salonId, name, email, passwordHash],
+      );
+      const userId = userResult.rows[0].id;
+      const clientResult = await client.query<ClientRow>(
+        `INSERT INTO clients (salon_id, user_id, name, phone, email, notes)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING ${CLIENT_SELECT}`,
+        [salonId, userId, name, input.phone?.trim() || null, email, input.notes?.trim() || null],
+      );
+      await client.query('COMMIT');
+      return {
+        client: mapClient(clientResult.rows[0]),
+        temporaryPassword: CLIENT_TEMPORARY_PASSWORD,
+      };
+    } catch (err: unknown) {
+      await client.query('ROLLBACK');
+      if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === '23505') {
+        throw new HttpError(409, 'Já existe um cliente com este e-mail.');
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
 
   try {
     const result = await db(pool).query<ClientRow>(
@@ -91,7 +141,7 @@ export async function createClient(
         input.userId ?? null,
       ],
     );
-    return mapClient(result.rows[0]);
+    return { client: mapClient(result.rows[0]) };
   } catch (err: unknown) {
     if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === '23505') {
       throw new HttpError(409, 'Já existe um cliente com este e-mail.');
@@ -291,5 +341,5 @@ export async function findOrCreateClient(
     );
     if (existing.rows[0]) return mapClient(existing.rows[0]);
   }
-  return createClient(salonId, input, pool);
+  return (await createClient(salonId, input, pool)).client;
 }

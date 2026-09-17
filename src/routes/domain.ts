@@ -7,6 +7,9 @@ import * as services from '../services/servicesService';
 import * as appointments from '../services/appointmentsService';
 import * as users from '../services/usersService';
 import * as totals from '../services/totalsService';
+import { notifyStaffNewBooking } from '../services/notificationsService';
+import * as push from '../services/pushService';
+import { env } from '../config/env';
 
 const router = Router();
 
@@ -59,8 +62,8 @@ router.post(
   '/clients',
   requireRole('dono', 'recepcao'),
   asyncHandler(async (req, res) => {
-    const client = await clients.createClient(salonId(req), req.body);
-    res.status(201).json({ client });
+    const { client, temporaryPassword } = await clients.createClient(salonId(req), req.body);
+    res.status(201).json({ client, temporaryPassword });
   }),
 );
 
@@ -247,6 +250,28 @@ router.post(
       start,
       notes,
     });
+
+    // Cliente reservou → avisa a equipe (e-mail / push / WhatsApp). Não bloqueia o 201.
+    if (req.user!.role === 'cliente') {
+      void (async () => {
+        try {
+          const [professional, service] = await Promise.all([
+            professionals.getActiveProfessional(salonId(req), professionalId),
+            services.getActiveService(salonId(req), serviceId),
+          ]);
+          await notifyStaffNewBooking(salonId(req), {
+            clientName: client.name,
+            serviceName: service.name,
+            professionalName: professional.name,
+            date,
+            start,
+          });
+        } catch (err) {
+          console.error('[notify] Falha ao montar notificação de reserva:', err);
+        }
+      })();
+    }
+
     res.status(201).json({ appointment, client });
   }),
 );
@@ -315,6 +340,47 @@ router.patch(
       req.user!.sub,
     );
     res.json({ user });
+  }),
+);
+
+// ── Web Push (equipe) ───────────────────────────
+router.get(
+  '/push/vapid-public-key',
+  requireRole('dono', 'recepcao', 'profissional'),
+  asyncHandler(async (_req, res) => {
+    if (!env.vapid.publicKey) {
+      res.status(503).json({ error: 'Push não configurado neste servidor.' });
+      return;
+    }
+    res.json({ publicKey: env.vapid.publicKey });
+  }),
+);
+
+router.post(
+  '/push/subscribe',
+  requireRole('dono', 'recepcao', 'profissional'),
+  asyncHandler(async (req, res) => {
+    await push.savePushSubscription(
+      req.user!.sub,
+      req.body,
+      typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined,
+    );
+    res.status(201).json({ ok: true });
+  }),
+);
+
+router.delete(
+  '/push/subscribe',
+  requireRole('dono', 'recepcao', 'profissional'),
+  asyncHandler(async (req, res) => {
+    const endpoint =
+      typeof req.body?.endpoint === 'string'
+        ? req.body.endpoint
+        : typeof req.query.endpoint === 'string'
+          ? req.query.endpoint
+          : '';
+    await push.deletePushSubscription(req.user!.sub, endpoint);
+    res.json({ ok: true });
   }),
 );
 
