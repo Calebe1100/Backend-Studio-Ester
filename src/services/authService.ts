@@ -8,6 +8,16 @@ import {
 } from '../lib/jwt';
 import { generateSecureToken, hashToken } from '../lib/crypto';
 import { getPool } from '../db/pool';
+import { isValidBrPhone, maskPhone, phoneLookupVariants } from '../lib/phone';
+import {
+  OTP_LENGTH,
+  OTP_MAX_ATTEMPTS,
+  OTP_MAX_PER_HOUR,
+  OTP_TTL_MINUTES,
+  generateOtpCode,
+  hashOtpCode,
+  otpCodeMatches,
+} from '../lib/otp';
 
 interface UserRow {
   id: string;
@@ -26,6 +36,17 @@ interface RefreshTokenRow {
   expires_at: Date;
   revoked_at: Date | null;
 }
+
+interface PasswordResetCodeRow {
+  id: string;
+  user_id: string;
+  code_hash: string;
+  attempts: number;
+  expires_at: Date;
+}
+
+/** Minutos de validade do token emitido após a validação do código. */
+const RESET_TOKEN_TTL_MINUTES = 15;
 
 export interface LoginResult {
   accessToken: string;
@@ -168,41 +189,152 @@ export async function logout(refreshToken: string, pool?: Pool): Promise<void> {
   );
 }
 
+/** Dígitos do telefone como estão gravados, sem máscara nem zeros à esquerda. */
+function phoneDigitsSql(column: string): string {
+  return `regexp_replace(regexp_replace(COALESCE(${column}, ''), '\\D', '', 'g'), '^0+', '')`;
+}
+
 /**
- * Gera um token de recuperação de senha e o persiste no banco.
- * Retorna o token bruto (deve ser enviado por e-mail).
+ * Localiza o usuário ativo pelo celular. O telefone da equipe fica em
+ * `users.phone` e o dos clientes em `clients.phone`.
  */
-export async function createPasswordResetToken(
-  email: string,
-  pool?: Pool
-): Promise<{ token: string; userId: string } | null> {
-  const db = resolvePool(pool);
+async function findActiveUserIdByPhone(db: Pool, phone: string): Promise<string | null> {
+  const variants = phoneLookupVariants(phone);
+  if (variants.length === 0) return null;
 
   const result = await db.query<{ id: string }>(
-    'SELECT id FROM users WHERE email = $1 AND active = TRUE',
-    [email.toLowerCase().trim()]
+    `SELECT u.id
+       FROM users u
+       LEFT JOIN clients c ON c.user_id = u.id
+      WHERE u.active = TRUE
+        AND (
+          ${phoneDigitsSql('u.phone')} = ANY($1::text[])
+          OR ${phoneDigitsSql('c.phone')} = ANY($1::text[])
+        )
+      ORDER BY u.created_at ASC
+      LIMIT 1`,
+    [variants]
   );
 
-  const user = result.rows[0];
-  if (!user) return null; // Não revelar se e-mail existe
+  return result.rows[0]?.id ?? null;
+}
+
+async function invalidateResetCode(db: Pool, id: string): Promise<void> {
+  await db.query('UPDATE password_reset_codes SET used_at = NOW() WHERE id = $1', [id]);
+}
+
+/**
+ * Gera o código de recuperação de senha do celular informado e o persiste
+ * (apenas o hash). Retorna null quando o número não existe ou o limite de
+ * envios por hora foi atingido — quem chama responde sempre igual.
+ */
+export async function createPasswordResetCode(
+  phone: string,
+  pool?: Pool
+): Promise<{ code: string; userId: string } | null> {
+  const db = resolvePool(pool);
+
+  if (!isValidBrPhone(phone)) return null;
+
+  const userId = await findActiveUserIdByPhone(db, phone);
+  if (!userId) return null;
+
+  const recent = await db.query<{ count: number }>(
+    `SELECT COUNT(*)::int AS count FROM password_reset_codes
+      WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour'`,
+    [userId]
+  );
+  if (Number(recent.rows[0]?.count ?? 0) >= OTP_MAX_PER_HOUR) {
+    console.warn('[auth] Limite de códigos por hora atingido para', maskPhone(phone));
+    return null;
+  }
+
+  // Só o código mais recente vale
+  await db.query(
+    `UPDATE password_reset_codes SET used_at = NOW()
+      WHERE user_id = $1 AND used_at IS NULL`,
+    [userId]
+  );
+
+  const code = generateOtpCode();
+  const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
+  await db.query(
+    `INSERT INTO password_reset_codes (user_id, code_hash, expires_at)
+     VALUES ($1, $2, $3)`,
+    [userId, hashOtpCode(code), expiresAt]
+  );
+
+  return { code, userId };
+}
+
+/**
+ * Valida o código recebido no celular e emite um token de uso único para a
+ * troca da senha.
+ */
+export async function verifyPasswordResetCode(
+  phone: string,
+  code: string,
+  pool?: Pool
+): Promise<{ resetToken: string; expiresIn: number }> {
+  const db = resolvePool(pool);
+  const invalidCode = () =>
+    Object.assign(new Error('Código inválido ou expirado.'), { statusCode: 400 });
+
+  const digits = (code ?? '').replace(/\D/g, '');
+  if (digits.length !== OTP_LENGTH) throw invalidCode();
+
+  const userId = await findActiveUserIdByPhone(db, phone);
+  if (!userId) throw invalidCode();
+
+  const result = await db.query<PasswordResetCodeRow>(
+    `SELECT id, user_id, code_hash, attempts, expires_at
+       FROM password_reset_codes
+      WHERE user_id = $1 AND used_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [userId]
+  );
+
+  const row = result.rows[0];
+  if (!row) throw invalidCode();
+
+  if (new Date(row.expires_at) < new Date()) {
+    await invalidateResetCode(db, row.id);
+    throw invalidCode();
+  }
+
+  if (!otpCodeMatches(digits, row.code_hash)) {
+    const attempts = row.attempts + 1;
+    if (attempts >= OTP_MAX_ATTEMPTS) {
+      await invalidateResetCode(db, row.id);
+      throw Object.assign(new Error('Muitas tentativas. Solicite um novo código.'), {
+        statusCode: 429,
+      });
+    }
+    await db.query('UPDATE password_reset_codes SET attempts = $2 WHERE id = $1', [
+      row.id,
+      attempts,
+    ]);
+    throw invalidCode();
+  }
+
+  await invalidateResetCode(db, row.id);
 
   const { token, tokenHash } = generateSecureToken();
-  const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
+  const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000);
 
-  // Invalida tokens anteriores
   await db.query(
     `UPDATE password_reset_tokens SET used_at = NOW()
-     WHERE user_id = $1 AND used_at IS NULL`,
-    [user.id]
+      WHERE user_id = $1 AND used_at IS NULL`,
+    [userId]
   );
-
   await db.query(
     `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
      VALUES ($1, $2, $3)`,
-    [user.id, tokenHash, expiresAt]
+    [userId, tokenHash, expiresAt]
   );
 
-  return { token, userId: user.id };
+  return { resetToken: token, expiresIn: RESET_TOKEN_TTL_MINUTES * 60 };
 }
 
 /**
@@ -245,5 +377,12 @@ export async function resetPassword(
   await db.query(
     `UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1`,
     [row.id]
+  );
+
+  // Sessões abertas em outros dispositivos deixam de valer
+  await db.query(
+    `UPDATE refresh_tokens SET revoked_at = NOW()
+      WHERE user_id = $1 AND revoked_at IS NULL`,
+    [row.user_id]
   );
 }

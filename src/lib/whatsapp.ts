@@ -3,6 +3,7 @@
  * Sem token/número configurados, as chamadas são ignoradas (no-op).
  */
 import { env } from '../config/env';
+import { toE164Digits } from './phone';
 
 export type NewBookingWhatsAppDetails = {
   clientName: string;
@@ -13,18 +14,28 @@ export type NewBookingWhatsAppDetails = {
 
 /** Converte telefone BR (com ou sem 55) para E.164 sem '+'. */
 export function toWhatsAppE164(phone: string): string | null {
-  let digits = phone.replace(/\D/g, '');
-  if (!digits) return null;
-  if (digits.startsWith('0')) digits = digits.replace(/^0+/, '');
-  if (!digits.startsWith('55') && (digits.length === 10 || digits.length === 11)) {
-    digits = `55${digits}`;
-  }
-  if (digits.length < 12 || digits.length > 13) return null;
-  return digits;
+  return toE164Digits(phone);
 }
 
 export function isWhatsAppConfigured(): boolean {
   return Boolean(env.whatsapp.token && env.whatsapp.phoneNumberId);
+}
+
+async function postToWhatsApp(body: unknown): Promise<void> {
+  const url = `https://graph.facebook.com/v21.0/${env.whatsapp.phoneNumberId}/messages`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.whatsapp.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`WhatsApp API ${res.status}: ${errText.slice(0, 400)}`);
+  }
 }
 
 export async function sendNewBookingWhatsApp(
@@ -42,8 +53,7 @@ export async function sendNewBookingWhatsApp(
     return;
   }
 
-  const url = `https://graph.facebook.com/v21.0/${env.whatsapp.phoneNumberId}/messages`;
-  const body = {
+  await postToWhatsApp({
     messaging_product: 'whatsapp',
     to,
     type: 'template',
@@ -62,19 +72,41 @@ export async function sendNewBookingWhatsApp(
         },
       ],
     },
-  };
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${env.whatsapp.token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
   });
+}
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`WhatsApp API ${res.status}: ${errText.slice(0, 400)}`);
+/**
+ * Envia o código de recuperação de senha pelo template de OTP.
+ * O template precisa ter um único parâmetro no corpo: o código.
+ */
+export async function sendPasswordResetWhatsApp(toPhone: string, code: string): Promise<void> {
+  if (!isWhatsAppConfigured()) {
+    throw new Error('WhatsApp não configurado');
   }
+
+  const to = toWhatsAppE164(toPhone);
+  if (!to) throw new Error('Telefone inválido para WhatsApp');
+
+  const components: unknown[] = [
+    { type: 'body', parameters: [{ type: 'text', text: code }] },
+  ];
+  if (env.whatsapp.otpTemplateCopyButton) {
+    components.push({
+      type: 'button',
+      sub_type: 'url',
+      index: '0',
+      parameters: [{ type: 'text', text: code }],
+    });
+  }
+
+  await postToWhatsApp({
+    messaging_product: 'whatsapp',
+    to,
+    type: 'template',
+    template: {
+      name: env.whatsapp.otpTemplateName,
+      language: { code: env.whatsapp.otpTemplateLang },
+      components,
+    },
+  });
 }
