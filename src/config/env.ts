@@ -65,5 +65,14 @@ export const env = {
     phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID ?? '',
     templateName: process.env.WHATSAPP_TEMPLATE_NAME ?? 'nova_reserva',
     templateLang: process.env.WHATSAPP_TEMPLATE_LANG ?? 'pt_BR',
+    otpTemplateName: process.env.WHATSAPP_OTP_TEMPLATE_NAME ?? 'codigo_recuperacao',
+    otpTemplateLang: process.env.WHATSAPP_OTP_TEMPLATE_LANG ?? 'pt_BR',
+    // Templates da categoria "Autenticação" da Meta exigem o botão de copiar código
+    otpTemplateCopyButton: process.env.WHATSAPP_OTP_TEMPLATE_COPY_BUTTON === 'true',
+  },
+  twilio: {
+    accountSid: process.env.TWILIO_ACCOUNT_SID ?? '',
+    authToken: process.env.TWILIO_AUTH_TOKEN ?? '',
+    from: process.env.TWILIO_FROM ?? '',
   },
 };

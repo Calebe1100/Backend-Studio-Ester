@@ -3,10 +3,11 @@ import {
   login,
   refresh,
   logout,
-  createPasswordResetToken,
+  createPasswordResetCode,
+  verifyPasswordResetCode,
   resetPassword,
 } from '../services/authService';
-import { sendPasswordResetEmail } from '../lib/mailer';
+import { OTP_TTL_MINUTES, sendPasswordResetCode } from '../lib/otp';
 
 const router = Router();
 
@@ -78,26 +79,55 @@ router.post('/logout', async (req: Request, res: Response) => {
 
 /**
  * POST /api/auth/forgot-password
- * Body: { email: string }
- * Response: 200 (sempre, sem revelar se e-mail existe)
+ * Body: { phone: string }
+ * Envia um código de 6 dígitos por WhatsApp (com fallback por SMS).
+ * Response: 200 (sempre, sem revelar se o celular existe)
  */
 router.post('/forgot-password', async (req: Request, res: Response) => {
-  const { email } = req.body ?? {};
+  const { phone } = req.body ?? {};
 
-  if (!email) {
-    res.status(400).json({ error: 'E-mail é obrigatório' });
+  if (!phone) {
+    res.status(400).json({ error: 'Celular é obrigatório' });
+    return;
+  }
+
+  // Resposta sempre igual para não revelar se o celular está cadastrado
+  const genericResponse = {
+    message: 'Se o celular estiver cadastrado, você receberá um código em instantes.',
+    expiresInMinutes: OTP_TTL_MINUTES,
+  };
+
+  try {
+    const result = await createPasswordResetCode(phone);
+    if (result) {
+      await sendPasswordResetCode(phone, result.code);
+    }
+    res.status(200).json(genericResponse);
+  } catch (err) {
+    console.error('[auth] Falha ao enviar código de recuperação:', err);
+    res.status(200).json(genericResponse);
+  }
+});
+
+/**
+ * POST /api/auth/verify-reset-code
+ * Body: { phone: string, code: string }
+ * Response: { resetToken, expiresIn } — usado no POST /reset-password
+ */
+router.post('/verify-reset-code', async (req: Request, res: Response) => {
+  const { phone, code } = req.body ?? {};
+
+  if (!phone || !code) {
+    res.status(400).json({ error: 'Celular e código são obrigatórios' });
     return;
   }
 
   try {
-    const result = await createPasswordResetToken(email);
-    if (result) {
-      await sendPasswordResetEmail(email, result.token);
-    }
-    // Resposta sempre igual para não revelar se o e-mail existe
-    res.status(200).json({ message: 'Se o e-mail existir, você receberá as instruções.' });
-  } catch {
-    res.status(200).json({ message: 'Se o e-mail existir, você receberá as instruções.' });
+    const result = await verifyPasswordResetCode(phone, code);
+    res.status(200).json(result);
+  } catch (err: unknown) {
+    const e = err as { statusCode?: number; message: string };
+    res.status(e.statusCode ?? 500).json({ error: e.message });
   }
 });
 

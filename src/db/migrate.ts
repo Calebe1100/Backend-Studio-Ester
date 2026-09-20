@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token_hash ON refresh_tokens(token_hash);
 
--- Tokens de recuperação de senha
+-- Tokens de recuperação de senha (emitidos após a validação do código)
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -73,6 +73,20 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
   used_at     TIMESTAMPTZ,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Códigos de recuperação de senha enviados ao celular (WhatsApp/SMS)
+CREATE TABLE IF NOT EXISTS password_reset_codes (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash   TEXT NOT NULL,          -- SHA-256 do código de 6 dígitos
+  attempts    INTEGER NOT NULL DEFAULT 0,
+  expires_at  TIMESTAMPTZ NOT NULL,
+  used_at     TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_codes_user
+  ON password_reset_codes(user_id, created_at DESC);
 
 -- Profissionais
 CREATE TABLE IF NOT EXISTS professionals (
@@ -153,6 +167,38 @@ CREATE INDEX IF NOT EXISTS idx_appointments_professional_starts
 
 CREATE INDEX IF NOT EXISTS idx_appointments_salon_starts
   ON appointments(salon_id, starts_at);
+
+-- Despesas do salão (balanço mensal: receita dos concluídos − despesas)
+-- kind = 'isolada' → lançamento único em due_date
+-- kind = 'fixa'    → recorrência mensal no dia day_of_month, vigente de starts_on até ends_on
+CREATE TABLE IF NOT EXISTS expenses (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  salon_id      UUID NOT NULL REFERENCES salons(id) ON DELETE CASCADE,
+  description   TEXT NOT NULL,
+  category      TEXT NOT NULL DEFAULT 'outros'
+                  CHECK (category IN ('aluguel','pessoal','produtos','utilidades','impostos','marketing','manutencao','outros')),
+  kind          TEXT NOT NULL CHECK (kind IN ('fixa','isolada')),
+  amount        NUMERIC(10,2) NOT NULL CHECK (amount >= 0),
+  due_date      DATE,
+  day_of_month  INTEGER CHECK (day_of_month BETWEEN 1 AND 31),
+  starts_on     DATE,
+  ends_on       DATE,
+  notes         TEXT,
+  active        BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT expenses_kind_fields CHECK (
+    (kind = 'isolada' AND due_date IS NOT NULL AND day_of_month IS NULL AND starts_on IS NULL)
+    OR (kind = 'fixa' AND day_of_month IS NOT NULL AND starts_on IS NOT NULL AND due_date IS NULL)
+  ),
+  CONSTRAINT expenses_period CHECK (ends_on IS NULL OR starts_on IS NULL OR ends_on >= starts_on)
+);
+
+CREATE INDEX IF NOT EXISTS idx_expenses_salon_due_date
+  ON expenses(salon_id, due_date);
+
+CREATE INDEX IF NOT EXISTS idx_expenses_salon_kind
+  ON expenses(salon_id, kind);
 `;
 
 function logDatabaseTarget(databaseUrl: string): void {

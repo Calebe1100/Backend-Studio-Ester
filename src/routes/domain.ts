@@ -7,6 +7,8 @@ import * as services from '../services/servicesService';
 import * as appointments from '../services/appointmentsService';
 import * as users from '../services/usersService';
 import * as totals from '../services/totalsService';
+import * as expenses from '../services/expensesService';
+import * as balance from '../services/balanceService';
 import { notifyStaffNewBooking } from '../services/notificationsService';
 import * as push from '../services/pushService';
 import { env } from '../config/env';
@@ -17,6 +19,13 @@ router.use(verifyToken);
 
 function salonId(req: Request): string {
   return req.user!.salonId;
+}
+
+function dateRange(req: Request): { from: string; to: string } | null {
+  const from = typeof req.query.from === 'string' ? req.query.from : '';
+  const to = typeof req.query.to === 'string' ? req.query.to : '';
+  if (!from || !to) return null;
+  return { from, to };
 }
 
 // ── Me / perfil do cliente ──────────────────────
@@ -384,18 +393,85 @@ router.delete(
   }),
 );
 
-// ── Totals / dashboard (dono) ───────────────────
+// ── Expenses / despesas (dono) ──────────────────
+router.get(
+  '/expenses',
+  requireRole('dono'),
+  asyncHandler(async (req, res) => {
+    res.json({ expenses: await expenses.listExpenses(salonId(req)) });
+  }),
+);
+
+router.get(
+  '/expenses/occurrences',
+  requireRole('dono'),
+  asyncHandler(async (req, res) => {
+    const range = dateRange(req);
+    if (!range) {
+      res.status(400).json({ error: 'Informe from e to (YYYY-MM-DD).' });
+      return;
+    }
+    res.json({
+      occurrences: await expenses.listExpenseOccurrences(salonId(req), range.from, range.to),
+    });
+  }),
+);
+
+router.post(
+  '/expenses',
+  requireRole('dono'),
+  asyncHandler(async (req, res) => {
+    const expense = await expenses.createExpense(salonId(req), req.body);
+    res.status(201).json({ expense });
+  }),
+);
+
+router.put(
+  '/expenses/:id',
+  requireRole('dono'),
+  asyncHandler(async (req, res) => {
+    const expense = await expenses.updateExpense(salonId(req), req.params.id, req.body);
+    res.json({ expense });
+  }),
+);
+
+router.patch(
+  '/expenses/:id/active',
+  requireRole('dono'),
+  asyncHandler(async (req, res) => {
+    const expense = await expenses.setExpenseActive(
+      salonId(req),
+      req.params.id,
+      Boolean(req.body.active),
+    );
+    res.json({ expense });
+  }),
+);
+
+// ── Totals / balance / dashboard (dono) ─────────
 router.get(
   '/totals',
   requireRole('dono'),
   asyncHandler(async (req, res) => {
-    const from = typeof req.query.from === 'string' ? req.query.from : undefined;
-    const to = typeof req.query.to === 'string' ? req.query.to : undefined;
-    if (!from || !to) {
+    const range = dateRange(req);
+    if (!range) {
       res.status(400).json({ error: 'Informe from e to (YYYY-MM-DD).' });
       return;
     }
-    res.json({ totals: await totals.getTotals(salonId(req), from, to) });
+    res.json({ totals: await totals.getTotals(salonId(req), range.from, range.to) });
+  }),
+);
+
+router.get(
+  '/balance',
+  requireRole('dono'),
+  asyncHandler(async (req, res) => {
+    const range = dateRange(req);
+    if (!range) {
+      res.status(400).json({ error: 'Informe from e to (YYYY-MM-DD).' });
+      return;
+    }
+    res.json({ balance: await balance.getBalance(salonId(req), range.from, range.to) });
   }),
 );
 
@@ -406,14 +482,17 @@ router.get(
     const today = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'America/Sao_Paulo',
     }).format(new Date());
-    const [dayAppointments, dayTotals] = await Promise.all([
+    const monthStart = `${today.slice(0, 8)}01`;
+    const [dayAppointments, dayTotals, monthBalance] = await Promise.all([
       appointments.listAppointments(salonId(req), { date: today }),
       totals.getTotals(salonId(req), today, today),
+      balance.getBalance(salonId(req), monthStart, today),
     ]);
     res.json({
       date: today,
       appointments: dayAppointments,
       totals: dayTotals,
+      monthBalance,
     });
   }),
 );
