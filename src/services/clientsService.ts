@@ -2,6 +2,8 @@ import { Pool } from 'pg';
 import { getPool } from '../db/pool';
 import { HttpError } from '../lib/httpError';
 import { hashPassword } from '../lib/crypto';
+import { normalizeStoredPhone, phoneLookupVariants } from '../lib/phone';
+import { findUserIdByPhone, phoneDigitsSql } from '../lib/phoneAccount';
 
 export type ClientDTO = {
   id: string;
@@ -54,6 +56,28 @@ function assertEmail(email: string | null, required: boolean) {
   }
 }
 
+async function requireUniquePhone(
+  raw: string | null | undefined,
+  pool?: Pool,
+  excludeUserId?: string,
+): Promise<string> {
+  const phone = normalizeStoredPhone(raw);
+  if (!phone) throw new HttpError(400, 'Informe um telefone válido com DDD.');
+
+  const taken = await findUserIdByPhone(db(pool), phone, { excludeUserId });
+  if (taken) throw new HttpError(409, 'Este telefone já possui cadastro. Faça login.');
+  return phone;
+}
+
+/** Telefone opcional no cadastro interno. Vazio vira null; valor informado precisa ser válido. */
+function optionalPhone(raw?: string | null): string | null {
+  const trimmed = raw?.trim() ?? '';
+  if (!trimmed) return null;
+  const phone = normalizeStoredPhone(trimmed);
+  if (!phone) throw new HttpError(400, 'Informe um telefone válido com DDD.');
+  return phone;
+}
+
 const CLIENT_SELECT = `id, name, phone, email, notes, active, user_id`;
 
 export const CLIENT_TEMPORARY_PASSWORD = 'Cliente@123';
@@ -86,6 +110,7 @@ export async function createClient(
 
   // Com e-mail: cria acesso (user role=cliente) + cliente com senha temporária
   if (email && !input.userId) {
+    const phone = await requireUniquePhone(input.phone, pool);
     const existingUser = await db(pool).query(
       'SELECT id FROM users WHERE lower(email) = $1 LIMIT 1',
       [email],
@@ -99,17 +124,17 @@ export async function createClient(
     try {
       await client.query('BEGIN');
       const userResult = await client.query<{ id: string }>(
-        `INSERT INTO users (salon_id, name, email, password_hash, role)
-         VALUES ($1, $2, $3, $4, 'cliente')
+        `INSERT INTO users (salon_id, name, email, password_hash, role, phone)
+         VALUES ($1, $2, $3, $4, 'cliente', $5)
          RETURNING id`,
-        [salonId, name, email, passwordHash],
+        [salonId, name, email, passwordHash, phone],
       );
       const userId = userResult.rows[0].id;
       const clientResult = await client.query<ClientRow>(
         `INSERT INTO clients (salon_id, user_id, name, phone, email, notes)
          VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING ${CLIENT_SELECT}`,
-        [salonId, userId, name, input.phone?.trim() || null, email, input.notes?.trim() || null],
+        [salonId, userId, name, phone, email, input.notes?.trim() || null],
       );
       await client.query('COMMIT');
       return {
@@ -135,7 +160,7 @@ export async function createClient(
       [
         salonId,
         name,
-        input.phone?.trim() || null,
+        input.phone ? optionalPhone(input.phone) : null,
         email,
         input.notes?.trim() || null,
         input.userId ?? null,
@@ -161,15 +186,33 @@ export async function updateClient(
   const email = normalizeEmail(input.email);
   assertEmail(email, false);
 
+  const current = await db(pool).query<{ user_id: string | null }>(
+    `SELECT user_id FROM clients WHERE id = $1 AND salon_id = $2`,
+    [id, salonId],
+  );
+  if (!current.rows[0]) throw new HttpError(404, 'Cliente não encontrado.');
+
+  const phone = current.rows[0].user_id
+    ? await requireUniquePhone(input.phone, pool, current.rows[0].user_id)
+    : optionalPhone(input.phone);
+
   try {
     const result = await db(pool).query<ClientRow>(
       `UPDATE clients
        SET name = $3, phone = $4, email = $5, notes = $6
        WHERE id = $1 AND salon_id = $2
        RETURNING ${CLIENT_SELECT}`,
-      [id, salonId, name, input.phone?.trim() || null, email, input.notes?.trim() || null],
+      [id, salonId, name, phone, email, input.notes?.trim() || null],
     );
     if (!result.rows[0]) throw new HttpError(404, 'Cliente não encontrado.');
+
+    if (result.rows[0].user_id) {
+      await db(pool).query(
+        `UPDATE users SET phone = $2, updated_at = NOW() WHERE id = $1`,
+        [result.rows[0].user_id, phone],
+      );
+    }
+
     return mapClient(result.rows[0]);
   } catch (err: unknown) {
     if (err instanceof HttpError) throw err;
@@ -222,8 +265,7 @@ export async function registerClientAccess(
   if (name.length < 2) throw new HttpError(400, 'Informe seu nome completo.');
   const email = normalizeEmail(input.email);
   assertEmail(email, true);
-  const phone = input.phone?.trim() || '';
-  if (phone.length < 8) throw new HttpError(400, 'Informe um telefone válido.');
+  const phone = await requireUniquePhone(input.phone, pool);
   if (!input.password || input.password.length < 8) {
     throw new HttpError(400, 'A senha deve ter pelo menos 8 caracteres.');
   }
@@ -247,10 +289,10 @@ export async function registerClientAccess(
   try {
     await client.query('BEGIN');
     const userResult = await client.query<{ id: string }>(
-      `INSERT INTO users (salon_id, name, email, password_hash, role)
-       VALUES ($1, $2, $3, $4, 'cliente')
+      `INSERT INTO users (salon_id, name, email, password_hash, role, phone)
+       VALUES ($1, $2, $3, $4, 'cliente', $5)
        RETURNING id`,
-      [salonId, name, email, passwordHash],
+      [salonId, name, email, passwordHash, phone],
     );
     const userId = userResult.rows[0].id;
     const clientResult = await client.query<ClientRow>(
@@ -280,8 +322,7 @@ export async function updateClientProfile(
 ): Promise<ClientDTO> {
   const name = input.name?.trim() ?? '';
   if (name.length < 2) throw new HttpError(400, 'Informe seu nome completo.');
-  const phone = input.phone?.trim() || '';
-  if (phone.length < 8) throw new HttpError(400, 'Informe um telefone válido.');
+  const phone = await requireUniquePhone(input.phone, pool, userId);
 
   const existing = await getClientByUserId(salonId, userId, pool);
   if (!existing) throw new HttpError(404, 'Perfil de cliente não encontrado.');
@@ -292,13 +333,13 @@ export async function updateClientProfile(
     }
     const passwordHash = await hashPassword(input.password);
     await db(pool).query(
-      `UPDATE users SET name = $2, password_hash = $3, updated_at = NOW() WHERE id = $1`,
-      [userId, name, passwordHash],
+      `UPDATE users SET name = $2, phone = $3, password_hash = $4, updated_at = NOW() WHERE id = $1`,
+      [userId, name, phone, passwordHash],
     );
   } else {
     await db(pool).query(
-      `UPDATE users SET name = $2, updated_at = NOW() WHERE id = $1`,
-      [userId, name],
+      `UPDATE users SET name = $2, phone = $3, updated_at = NOW() WHERE id = $1`,
+      [userId, name, phone],
     );
   }
 
@@ -331,13 +372,16 @@ export async function findOrCreateClient(
   }
 
   const phone = input.phone?.trim() || '';
-  if (phone) {
+  const variants = phoneLookupVariants(phone);
+  if (variants.length > 0) {
     const existing = await db(pool).query<ClientRow>(
       `SELECT ${CLIENT_SELECT}
        FROM clients
-       WHERE salon_id = $1 AND phone = $2 AND active = TRUE
+       WHERE salon_id = $1
+         AND active = TRUE
+         AND ${phoneDigitsSql('phone')} = ANY($2::text[])
        LIMIT 1`,
-      [salonId, phone],
+      [salonId, variants],
     );
     if (existing.rows[0]) return mapClient(existing.rows[0]);
   }

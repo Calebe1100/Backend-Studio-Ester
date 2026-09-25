@@ -2,6 +2,8 @@ import { Pool } from 'pg';
 import { getPool } from '../db/pool';
 import { HttpError } from '../lib/httpError';
 import { hashPassword } from '../lib/crypto';
+import { normalizeStoredPhone } from '../lib/phone';
+import { findUserIdByPhone } from '../lib/phoneAccount';
 
 export type UserDTO = {
   id: string;
@@ -45,13 +47,17 @@ function mapUser(row: UserRow): UserDTO {
   };
 }
 
-function normalizePhone(raw?: string | null): string | null {
-  const digits = (raw ?? '').replace(/\D/g, '');
-  if (!digits) return null;
-  if (digits.length < 10) {
-    throw new HttpError(400, 'Informe um telefone válido com DDD.');
-  }
-  return digits;
+async function requireUniquePhone(
+  raw: string | null | undefined,
+  pool?: Pool,
+  excludeUserId?: string,
+): Promise<string> {
+  const phone = normalizeStoredPhone(raw);
+  if (!phone) throw new HttpError(400, 'Informe um telefone válido com DDD.');
+
+  const taken = await findUserIdByPhone(db(pool), phone, { excludeUserId });
+  if (taken) throw new HttpError(409, 'Este telefone já possui cadastro.');
+  return phone;
 }
 
 export async function listUsers(salonId: string, pool?: Pool): Promise<UserDTO[]> {
@@ -109,7 +115,7 @@ export async function createUser(
     throw new HttpError(400, 'Papel inválido.');
   }
 
-  const phone = normalizePhone(input.phone);
+  const phone = await requireUniquePhone(input.phone, pool);
   const passwordHash = await hashPassword(input.password);
   try {
     const result = await db(pool).query<UserRow>(
@@ -139,7 +145,7 @@ export async function updateUser(
     throw new HttpError(400, 'Papel inválido.');
   }
 
-  const phone = normalizePhone(input.phone);
+  const phone = await requireUniquePhone(input.phone, pool, id);
 
   if (input.password) {
     if (input.password.length < 8) {

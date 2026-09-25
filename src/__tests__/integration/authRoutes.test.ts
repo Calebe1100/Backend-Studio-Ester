@@ -79,6 +79,40 @@ describe('POST /api/auth/login', () => {
     expect(res.status).toBe(400);
   });
 
+  it('aceita login pelo telefone', async () => {
+    mockLogin.mockResolvedValueOnce(MOCK_LOGIN_RESULT);
+
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ phone: '(11) 98888-7777', password: 'Senh@Correta123' });
+
+    expect(res.status).toBe(200);
+    expect(mockLogin).toHaveBeenCalledWith('(11) 98888-7777', 'Senh@Correta123');
+  });
+
+  it('aceita identifier com e-mail', async () => {
+    mockLogin.mockResolvedValueOnce(MOCK_LOGIN_RESULT);
+
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ identifier: 'ester@studioester.com.br', password: 'Senh@Correta123' });
+
+    expect(res.status).toBe(200);
+    expect(mockLogin).toHaveBeenCalledWith('ester@studioester.com.br', 'Senh@Correta123');
+  });
+
+  it('retorna 400 para telefone inválido', async () => {
+    mockLogin.mockClear();
+
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ identifier: '12345', password: 'senha1234' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Informe um e-mail ou telefone válido.');
+    expect(mockLogin).not.toHaveBeenCalled();
+  });
+
   it('retorna 400 quando password está ausente', async () => {
     const res = await request(app)
       .post('/api/auth/login')

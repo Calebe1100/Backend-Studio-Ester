@@ -7,6 +7,7 @@ import {
   spLocalToDate,
   timeInSP,
   toMinutes,
+  weekdayFromISO,
 } from '../lib/time';
 import { getActiveProfessional } from './professionalsService';
 import { getActiveService } from './servicesService';
@@ -91,6 +92,12 @@ async function assertNoOverlap(
   }
 }
 
+function assertWorksOnDate(workDays: number[], date: string): void {
+  if (!workDays.includes(weekdayFromISO(date))) {
+    throw new HttpError(400, 'O profissional não atende neste dia da semana.');
+  }
+}
+
 function assertWithinWorkHours(
   workStart: string,
   workEnd: string,
@@ -122,6 +129,34 @@ function assertValidTransition(from: AppointmentStatus, to: AppointmentStatus): 
   if (from === to) return;
   if (!NEXT_STATUSES[from].includes(to)) {
     throw new HttpError(400, `Não é possível alterar o status de "${from}" para "${to}".`);
+  }
+}
+
+/** O cliente só confirma presença ou cancela o próprio horário. */
+const CLIENT_NEXT_STATUSES: Record<AppointmentStatus, AppointmentStatus[]> = {
+  agendado: ['confirmado', 'cancelado'],
+  confirmado: ['cancelado'],
+  em_atendimento: [],
+  concluido: [],
+  cancelado: [],
+  nao_compareceu: [],
+};
+
+/** Cancelamento do cliente vale até 2 horas antes do início. */
+export const CLIENT_CANCEL_LEAD_MS = 2 * 60 * 60 * 1000;
+
+export function assertClientStatusChange(
+  from: AppointmentStatus,
+  to: AppointmentStatus,
+  startsAt: Date,
+  now: Date = new Date(),
+): void {
+  if (from === to) return;
+  if (!CLIENT_NEXT_STATUSES[from].includes(to)) {
+    throw new HttpError(400, 'Você só pode confirmar ou cancelar o próprio agendamento.');
+  }
+  if (to === 'cancelado' && startsAt.getTime() - now.getTime() < CLIENT_CANCEL_LEAD_MS) {
+    throw new HttpError(400, 'O cancelamento só é permitido até 2 horas antes do horário.');
   }
 }
 
@@ -206,6 +241,7 @@ export async function createAppointment(
   }
 
   const end = addMinutesHHMM(input.start, service.durationMinutes);
+  assertWorksOnDate(professional.workDays, input.date);
   assertWithinWorkHours(professional.workStart, professional.workEnd, input.start, end);
 
   const startsAt = spLocalToDate(input.date, input.start);
@@ -277,6 +313,11 @@ export async function updateAppointment(
   const endsAt = spLocalToDate(input.date, end);
 
   const existingMapped = mapAppointment(existing.rows[0]);
+  const keepingDay =
+    existingMapped.date === input.date && existing.rows[0].professional_id === input.professionalId;
+  if (!keepingDay) {
+    assertWorksOnDate(professional.workDays, input.date);
+  }
   const scheduleChanged =
     existingMapped.date !== input.date || existingMapped.start !== input.start;
   if (scheduleChanged) {
@@ -329,6 +370,7 @@ export async function setAppointmentStatus(
   id: string,
   status: string,
   pool?: Pool,
+  clientId?: string,
 ): Promise<AppointmentDTO> {
   if (!APPOINTMENT_STATUSES.includes(status as AppointmentStatus)) {
     throw new HttpError(400, 'Status inválido.');
@@ -342,8 +384,15 @@ export async function setAppointmentStatus(
     [id, salonId],
   );
   if (!existing.rows[0]) throw new HttpError(404, 'Agendamento não encontrado.');
+  if (clientId && existing.rows[0].client_id !== clientId) {
+    throw new HttpError(404, 'Agendamento não encontrado.');
+  }
 
-  assertValidTransition(existing.rows[0].status, next);
+  if (clientId) {
+    assertClientStatusChange(existing.rows[0].status, next, existing.rows[0].starts_at);
+  } else {
+    assertValidTransition(existing.rows[0].status, next);
+  }
 
   const result = await db(pool).query<AppointmentRow>(
     `UPDATE appointments SET status = $3, updated_at = NOW()

@@ -8,24 +8,33 @@ import {
   resetPassword,
 } from '../services/authService';
 import { OTP_TTL_MINUTES, sendPasswordResetCode } from '../lib/otp';
+import { isValidBrPhone } from '../lib/phone';
 
 const router = Router();
 
 /**
  * POST /api/auth/login
- * Body: { email: string, password: string }
+ * Body: { identifier?: string, email?: string, phone?: string, password: string }
+ * `identifier` aceita e-mail ou telefone. `email` e `phone` seguem aceitos.
  * Response: { accessToken, refreshToken, expiresIn, user }
  */
 router.post('/login', async (req: Request, res: Response) => {
-  const { email, password } = req.body ?? {};
+  const body = req.body ?? {};
+  const identifier = String(body.identifier ?? body.email ?? body.phone ?? '').trim();
+  const password = body.password;
 
-  if (!email || !password) {
-    res.status(400).json({ error: 'E-mail e senha são obrigatórios' });
+  if (!identifier || !password) {
+    res.status(400).json({ error: 'E-mail ou telefone e senha são obrigatórios' });
+    return;
+  }
+
+  if (!identifier.includes('@') && !isValidBrPhone(identifier)) {
+    res.status(400).json({ error: 'Informe um e-mail ou telefone válido.' });
     return;
   }
 
   try {
-    const result = await login(email, password);
+    const result = await login(identifier, password);
     res.status(200).json(result);
   } catch (err: unknown) {
     const e = err as { statusCode?: number; message: string };

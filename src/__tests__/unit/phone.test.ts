@@ -1,4 +1,4 @@
-import { isValidBrPhone, maskPhone, phoneLookupVariants, toE164 } from '../../lib/phone';
+import { isValidBrPhone, maskPhone, normalizeStoredPhone, phoneLookupVariants, toE164 } from '../../lib/phone';
 
 describe('isValidBrPhone', () => {
   it('aceita celular e fixo com DDD, com ou sem DDI', () => {
@@ -10,6 +10,18 @@ describe('isValidBrPhone', () => {
   it('rejeita números incompletos', () => {
     expect(isValidBrPhone('98888777')).toBe(false);
     expect(isValidBrPhone('')).toBe(false);
+  });
+});
+
+describe('normalizeStoredPhone', () => {
+  it('grava só o número local', () => {
+    expect(normalizeStoredPhone('(11) 98888-7777')).toBe('11988887777');
+    expect(normalizeStoredPhone('5511988887777')).toBe('11988887777');
+  });
+
+  it('rejeita telefone incompleto', () => {
+    expect(normalizeStoredPhone('')).toBeNull();
+    expect(normalizeStoredPhone('12345')).toBeNull();
   });
 });
 
