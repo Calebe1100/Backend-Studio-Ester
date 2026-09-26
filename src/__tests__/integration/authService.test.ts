@@ -27,9 +27,15 @@ interface UserRow {
   salon_id: string;
   name: string;
   email: string;
+  phone: string | null;
   password_hash: string;
   role: string;
   active: boolean;
+}
+
+interface ClientPhoneRow {
+  user_id: string;
+  phone: string | null;
 }
 
 interface RefreshTokenRow {
@@ -42,11 +48,34 @@ interface RefreshTokenRow {
 
 // Estado de banco em memória — reset entre testes
 let inMemoryUsers: UserRow[] = [];
+let inMemoryClients: ClientPhoneRow[] = [];
 let inMemoryRefreshTokens: RefreshTokenRow[] = [];
+
+function digitsOf(phone: string | null): string {
+  return (phone ?? '').replace(/\D/g, '').replace(/^0+/, '');
+}
 
 function setupMockPool() {
   mockQuery.mockImplementation(async (sql: string, params: unknown[]) => {
     const q = sql.trim().toLowerCase();
+    const collapsed = q.replace(/\s+/g, ' ');
+
+    if (collapsed.startsWith('select u.id from users u')) {
+      const variants = params[0] as string[];
+      const activeOnly = params[1] === true;
+      const exclude = (params[2] as string | null) ?? null;
+      const user = inMemoryUsers.find((u) => {
+        if (activeOnly && !u.active) return false;
+        if (exclude && u.id === exclude) return false;
+        return (
+          variants.includes(digitsOf(u.phone)) ||
+          inMemoryClients.some(
+            (c) => c.user_id === u.id && variants.includes(digitsOf(c.phone)),
+          )
+        );
+      });
+      return { rows: user ? [{ id: user.id }] : [] };
+    }
 
     // SELECT de usuário por e-mail
     if (q.startsWith('select * from users where email')) {
@@ -113,6 +142,7 @@ function setupMockPool() {
 
 beforeEach(async () => {
   inMemoryUsers = [];
+  inMemoryClients = [];
   inMemoryRefreshTokens = [];
   setupMockPool();
 
@@ -123,6 +153,7 @@ beforeEach(async () => {
     salon_id: 'salon-test-uuid',
     name: 'Ester',
     email: 'ester@studioester.com.br',
+    phone: '11988887777',
     password_hash: passwordHash,
     role: 'dono',
     active: true,
@@ -166,6 +197,36 @@ describe('Persistência do Login — authService.login', () => {
   it('[3] login com e-mail inexistente retorna erro 401', async () => {
     await expect(
       login('naoexiste@teste.com', 'qualquerSenha', mockPool)
+    ).rejects.toMatchObject({ statusCode: 401 });
+  });
+
+  it('[3b] login com telefone da equipe autentica o usuário', async () => {
+    const result = await login('(11) 98888-7777', 'Senh@Correta123', mockPool);
+    expect(result.user.email).toBe('ester@studioester.com.br');
+    expect(result.user.id).toBe('user-test-uuid');
+  });
+
+  it('[3c] login com telefone gravado no cliente autentica a conta', async () => {
+    inMemoryUsers.push({
+      id: 'client-user',
+      salon_id: 'salon-test-uuid',
+      name: 'Maria',
+      email: 'maria@email.com',
+      phone: null,
+      password_hash: inMemoryUsers[0].password_hash,
+      role: 'cliente',
+      active: true,
+    });
+    inMemoryClients.push({ user_id: 'client-user', phone: '(21) 97777-1234' });
+
+    const result = await login('21977771234', 'Senh@Correta123', mockPool);
+    expect(result.user.id).toBe('client-user');
+    expect(result.user.role).toBe('cliente');
+  });
+
+  it('[3d] login com telefone inexistente retorna erro 401', async () => {
+    await expect(
+      login('11900000000', 'Senh@Correta123', mockPool)
     ).rejects.toMatchObject({ statusCode: 401 });
   });
 

@@ -300,12 +300,24 @@ router.put(
 
 router.patch(
   '/appointments/:id/status',
-  requireRole('dono', 'recepcao', 'profissional'),
+  requireRole('dono', 'recepcao', 'profissional', 'cliente'),
   asyncHandler(async (req, res) => {
+    let clientId: string | undefined;
+    if (req.user!.role === 'cliente') {
+      const mine = await clients.getClientByUserId(salonId(req), req.user!.sub);
+      if (!mine) {
+        res.status(404).json({ error: 'Perfil de cliente não encontrado.' });
+        return;
+      }
+      clientId = mine.id;
+    }
+
     const appointment = await appointments.setAppointmentStatus(
       salonId(req),
       req.params.id,
       req.body.status,
+      undefined,
+      clientId,
     );
     res.json({ appointment });
   }),

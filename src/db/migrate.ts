@@ -96,9 +96,19 @@ CREATE TABLE IF NOT EXISTS professionals (
   name         TEXT NOT NULL,
   work_start   TIME NOT NULL DEFAULT '08:00',
   work_end     TIME NOT NULL DEFAULT '18:00',
+  work_days    SMALLINT[] NOT NULL DEFAULT '{0,1,2,3,4,5,6}',
   active       BOOLEAN NOT NULL DEFAULT TRUE,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Bancos já existentes: dias da semana em que a profissional atende (0=domingo … 6=sábado)
+ALTER TABLE professionals ADD COLUMN IF NOT EXISTS work_days SMALLINT[] NOT NULL DEFAULT '{0,1,2,3,4,5,6}';
+ALTER TABLE professionals DROP CONSTRAINT IF EXISTS professionals_work_days_check;
+ALTER TABLE professionals ADD CONSTRAINT professionals_work_days_check
+  CHECK (
+    cardinality(work_days) > 0
+    AND work_days <@ ARRAY[0,1,2,3,4,5,6]::smallint[]
+  );
 
 -- Serviços (CRUD exclusivo do backoffice)
 CREATE TABLE IF NOT EXISTS services (

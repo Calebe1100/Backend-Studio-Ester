@@ -1,6 +1,11 @@
 /** Fuso operacional do salão (REFINAMENTO). */
 export const SALON_TZ_OFFSET = '-03:00';
 
+/** Dia da semana civil (0=domingo … 6=sábado) de uma data YYYY-MM-DD. */
+export function weekdayFromISO(date: string): number {
+  return new Date(`${date}T12:00:00${SALON_TZ_OFFSET}`).getUTCDay();
+}
+
 /** Converte data (YYYY-MM-DD) + hora (HH:MM) de America/Sao_Paulo em Date UTC. */
 export function spLocalToDate(date: string, hhmm: string): Date {
   const time = hhmm.length === 5 ? `${hhmm}:00` : hhmm;

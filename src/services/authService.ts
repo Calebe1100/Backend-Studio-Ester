@@ -8,7 +8,8 @@ import {
 } from '../lib/jwt';
 import { generateSecureToken, hashToken } from '../lib/crypto';
 import { getPool } from '../db/pool';
-import { isValidBrPhone, maskPhone, phoneLookupVariants } from '../lib/phone';
+import { isValidBrPhone, maskPhone } from '../lib/phone';
+import { findUserIdByPhone } from '../lib/phoneAccount';
 import {
   OTP_LENGTH,
   OTP_MAX_ATTEMPTS,
@@ -60,21 +61,33 @@ function resolvePool(pool?: Pool): Pool {
 }
 
 /**
- * Autentica um usuário e persiste o refresh token no banco.
+ * Autentica um usuário pelo e-mail ou pelo telefone e persiste o refresh token.
  */
 export async function login(
-  email: string,
+  identifier: string,
   password: string,
   pool?: Pool
 ): Promise<LoginResult> {
   const db = resolvePool(pool);
+  const raw = identifier.trim();
 
-  const result = await db.query<UserRow>(
-    'SELECT * FROM users WHERE email = $1 AND active = TRUE',
-    [email.toLowerCase().trim()]
-  );
-
-  const user = result.rows[0];
+  let user: UserRow | undefined;
+  if (raw.includes('@')) {
+    const result = await db.query<UserRow>(
+      'SELECT * FROM users WHERE email = $1 AND active = TRUE',
+      [raw.toLowerCase()]
+    );
+    user = result.rows[0];
+  } else {
+    const userId = await findUserIdByPhone(db, raw, { activeOnly: true });
+    if (userId) {
+      const result = await db.query<UserRow>(
+        'SELECT * FROM users WHERE id = $1 AND active = TRUE',
+        [userId]
+      );
+      user = result.rows[0];
+    }
+  }
 
   // Proteção de timing: compara mesmo sem usuário para evitar timing attack
   const dummyHash =
@@ -189,34 +202,9 @@ export async function logout(refreshToken: string, pool?: Pool): Promise<void> {
   );
 }
 
-/** Dígitos do telefone como estão gravados, sem máscara nem zeros à esquerda. */
-function phoneDigitsSql(column: string): string {
-  return `regexp_replace(regexp_replace(COALESCE(${column}, ''), '\\D', '', 'g'), '^0+', '')`;
-}
-
-/**
- * Localiza o usuário ativo pelo celular. O telefone da equipe fica em
- * `users.phone` e o dos clientes em `clients.phone`.
- */
+/** Localiza o usuário ativo pelo celular (equipe em users.phone, cliente em clients.phone). */
 async function findActiveUserIdByPhone(db: Pool, phone: string): Promise<string | null> {
-  const variants = phoneLookupVariants(phone);
-  if (variants.length === 0) return null;
-
-  const result = await db.query<{ id: string }>(
-    `SELECT u.id
-       FROM users u
-       LEFT JOIN clients c ON c.user_id = u.id
-      WHERE u.active = TRUE
-        AND (
-          ${phoneDigitsSql('u.phone')} = ANY($1::text[])
-          OR ${phoneDigitsSql('c.phone')} = ANY($1::text[])
-        )
-      ORDER BY u.created_at ASC
-      LIMIT 1`,
-    [variants]
-  );
-
-  return result.rows[0]?.id ?? null;
+  return findUserIdByPhone(db, phone, { activeOnly: true });
 }
 
 async function invalidateResetCode(db: Pool, id: string): Promise<void> {

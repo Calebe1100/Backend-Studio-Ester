@@ -22,6 +22,16 @@ function toLocalNumber(digits: string): string {
 }
 
 /**
+ * Telefone pronto para gravar: só dígitos, sem DDI.
+ * Retorna null quando vazio ou inválido.
+ */
+export function normalizeStoredPhone(raw?: string | null): string | null {
+  const digits = toDigits(raw);
+  if (!isValidBrPhone(digits)) return null;
+  return toLocalNumber(digits);
+}
+
+/**
  * Variantes de um telefone para comparar com o que está salvo no banco.
  * Cobre DDI opcional e o nono dígito dos celulares, que pode faltar em
  * cadastros antigos.
