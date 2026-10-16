@@ -225,6 +225,25 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS idx_notifications_user_unseen
   ON notifications (user_id, created_at DESC)
   WHERE seen_at IS NULL;
+
+-- Uma conta tem no máximo uma ficha de profissional
+CREATE UNIQUE INDEX IF NOT EXISTS idx_professionals_user_id
+  ON professionals (user_id)
+  WHERE user_id IS NOT NULL;
+
+-- Visibilidade concedida pela administradora. revoked_at nulo = acesso vigente.
+CREATE TABLE IF NOT EXISTS professional_access (
+  professional_id UUID PRIMARY KEY REFERENCES professionals(id) ON DELETE CASCADE,
+  user_id         UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  agenda_equipe   BOOLEAN NOT NULL DEFAULT FALSE,
+  cliente_contato BOOLEAN NOT NULL DEFAULT FALSE,
+  lista_clientes  BOOLEAN NOT NULL DEFAULT FALSE,
+  precos          BOOLEAN NOT NULL DEFAULT FALSE,
+  agendar         BOOLEAN NOT NULL DEFAULT TRUE,
+  granted_by      UUID REFERENCES users(id) ON DELETE SET NULL,
+  granted_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  revoked_at      TIMESTAMPTZ
+);
 `;
 
 function logDatabaseTarget(databaseUrl: string): void {

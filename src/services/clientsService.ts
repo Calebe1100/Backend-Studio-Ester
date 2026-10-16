@@ -98,6 +98,22 @@ export async function listClients(salonId: string, pool?: Pool): Promise<ClientD
   return result.rows.map(mapClient);
 }
 
+export async function listClientNames(
+  salonId: string,
+  ids: string[],
+  pool?: Pool,
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (ids.length === 0) return map;
+  const result = await db(pool).query<{ id: string; name: string }>(
+    `SELECT id, name FROM clients
+     WHERE salon_id = $1 AND id = ANY($2::uuid[])`,
+    [salonId, ids],
+  );
+  for (const row of result.rows) map.set(row.id, row.name);
+  return map;
+}
+
 export async function createClient(
   salonId: string,
   input: { name: string; phone?: string; email?: string; notes?: string; userId?: string | null },

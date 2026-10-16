@@ -1,11 +1,14 @@
 import { Router, Request } from 'express';
 import { verifyToken, requireRole } from '../middlewares/auth';
+import { attachLiveAccount } from '../middlewares/account';
 import { asyncHandler } from '../lib/asyncHandler';
+import { HttpError } from '../lib/httpError';
 import * as clients from '../services/clientsService';
 import * as professionals from '../services/professionalsService';
 import * as services from '../services/servicesService';
 import * as appointments from '../services/appointmentsService';
 import * as users from '../services/usersService';
+import * as access from '../services/professionalAccessService';
 import * as totals from '../services/totalsService';
 import * as expenses from '../services/expensesService';
 import * as balance from '../services/balanceService';
@@ -20,6 +23,35 @@ import { env } from '../config/env';
 const router = Router();
 
 router.use(verifyToken);
+router.use(asyncHandler(attachLiveAccount));
+
+const OPAQUE_CONFLICT = 'Horário indisponível.';
+
+function viewerOf(req: Request) {
+  return {
+    role: req.user!.role,
+    professionalId: req.account?.professionalId ?? null,
+    permissions: req.account?.permissions ?? null,
+  };
+}
+
+function assertProfessionalBooking(req: Request, professionalId: string | undefined) {
+  if (req.user!.role !== 'profissional') return;
+  const permissions = req.account?.permissions;
+  const ownId = req.account?.professionalId;
+  if (!permissions?.agendar || !ownId || professionalId !== ownId) {
+    throw new HttpError(403, 'Acesso negado para este papel');
+  }
+}
+
+async function presentAppointments(req: Request, items: appointments.AppointmentDTO[]) {
+  const names = await clients.listClientNames(
+    salonId(req),
+    [...new Set(items.map((item) => item.clientId))],
+  );
+  const viewer = viewerOf(req);
+  return items.map((item) => access.presentAppointment(item, names.get(item.clientId), viewer));
+}
 
 function salonId(req: Request): string {
   return req.user!.salonId;
@@ -36,7 +68,17 @@ function dateRange(req: Request): { from: string; to: string } | null {
 router.get(
   '/me',
   asyncHandler(async (req, res) => {
-    res.json({ user: req.user });
+    const account = req.account!;
+    res.json({
+      user: {
+        id: account.id,
+        name: account.name,
+        email: account.email,
+        role: account.role,
+      },
+      permissions: account.role === 'profissional' ? account.permissions : null,
+      professionalId: account.role === 'profissional' ? account.professionalId : null,
+    });
   }),
 );
 
@@ -67,7 +109,15 @@ router.get(
   '/clients',
   requireRole('dono', 'recepcao', 'profissional'),
   asyncHandler(async (req, res) => {
-    res.json({ clients: await clients.listClients(salonId(req)) });
+    if (req.user!.role === 'profissional' && !req.account?.permissions?.listaClientes) {
+      res.status(403).json({ error: 'Acesso negado para este papel' });
+      return;
+    }
+    const list = await clients.listClients(salonId(req));
+    res.json({
+      clients:
+        req.user!.role === 'profissional' ? list.map((client) => access.presentClient(client)) : list,
+    });
   }),
 );
 
@@ -107,7 +157,12 @@ router.get(
   '/professionals',
   requireRole('dono', 'recepcao', 'profissional', 'cliente'),
   asyncHandler(async (req, res) => {
-    res.json({ professionals: await professionals.listProfessionals(salonId(req)) });
+    let list = await professionals.listProfessionals(salonId(req));
+    if (req.user!.role === 'profissional' && !req.account?.permissions?.agendaEquipe) {
+      const ownId = req.account?.professionalId;
+      list = ownId ? list.filter((item) => item.id === ownId) : [];
+    }
+    res.json({ professionals: list });
   }),
 );
 
@@ -151,7 +206,9 @@ router.get(
   '/services',
   requireRole('dono', 'recepcao', 'profissional', 'cliente'),
   asyncHandler(async (req, res) => {
-    res.json({ services: await services.listServices(salonId(req)) });
+    const list = await services.listServices(salonId(req));
+    const viewer = viewerOf(req);
+    res.json({ services: list.map((service) => access.presentService(service, viewer)) });
   }),
 );
 
@@ -199,13 +256,14 @@ router.get(
     let clientId: string | undefined;
 
     if (req.user!.role === 'profissional') {
-      const all = await professionals.listProfessionals(salonId(req));
-      const mine = all.find((p) => p.userId === req.user!.sub);
-      if (!mine) {
+      const ownId = req.account?.professionalId;
+      if (!ownId) {
         res.json({ appointments: [] });
         return;
       }
-      professionalId = mine.id;
+      if (!req.account?.permissions?.agendaEquipe) {
+        professionalId = ownId;
+      }
     }
 
     if (req.user!.role === 'cliente') {
@@ -217,15 +275,14 @@ router.get(
       clientId = mine.id;
     }
 
-    res.json({
-      appointments: await appointments.listAppointments(salonId(req), {
-        date,
-        from,
-        to,
-        professionalId,
-        clientId,
-      }),
+    const list = await appointments.listAppointments(salonId(req), {
+      date,
+      from,
+      to,
+      professionalId,
+      clientId,
     });
+    res.json({ appointments: await presentAppointments(req, list) });
   }),
 );
 
@@ -233,8 +290,16 @@ router.post(
   '/appointments',
   requireRole('dono', 'recepcao', 'profissional'),
   asyncHandler(async (req, res) => {
-    const appointment = await appointments.createAppointment(salonId(req), req.body);
-    res.status(201).json({ appointment });
+    assertProfessionalBooking(req, req.body?.professionalId);
+    const opaque = req.user!.role === 'profissional';
+    const appointment = await appointments.createAppointment(
+      salonId(req),
+      req.body,
+      undefined,
+      opaque ? { conflictMessage: OPAQUE_CONFLICT } : undefined,
+    );
+    const [presented] = await presentAppointments(req, [appointment]);
+    res.status(201).json({ appointment: presented });
   }),
 );
 
@@ -243,6 +308,10 @@ router.post(
   requireRole('dono', 'recepcao', 'profissional', 'cliente'),
   asyncHandler(async (req, res) => {
     const { name, phone, email, professionalId, serviceId, date, start, notes } = req.body;
+
+    if (req.user!.role === 'profissional') {
+      assertProfessionalBooking(req, professionalId);
+    }
 
     let client;
     if (req.user!.role === 'cliente') {
@@ -255,14 +324,19 @@ router.post(
       client = await clients.findOrCreateClient(salonId(req), { name, phone, email });
     }
 
-    const appointment = await appointments.createAppointment(salonId(req), {
-      clientId: client.id,
-      professionalId,
-      serviceId,
-      date,
-      start,
-      notes,
-    });
+    const appointment = await appointments.createAppointment(
+      salonId(req),
+      {
+        clientId: client.id,
+        professionalId,
+        serviceId,
+        date,
+        start,
+        notes,
+      },
+      undefined,
+      req.user!.role === 'profissional' ? { conflictMessage: OPAQUE_CONFLICT } : undefined,
+    );
 
     // Cliente reservou → avisa a equipe (e-mail / push / WhatsApp). Não bloqueia o 201.
     if (req.user!.role === 'cliente') {
@@ -285,7 +359,24 @@ router.post(
       })();
     }
 
-    res.status(201).json({ appointment, client });
+    const [presented] = await presentAppointments(req, [appointment]);
+    const shareContact = Boolean(
+      req.account?.permissions?.listaClientes || req.account?.permissions?.clienteContato,
+    );
+    const visibleClient =
+      req.user!.role === 'profissional'
+        ? access.presentClient(
+            shareContact
+              ? client
+              : {
+                  ...client,
+                  name: access.firstName(client.name),
+                  phone: '',
+                  notes: '',
+                },
+          )
+        : client;
+    res.status(201).json({ appointment: presented, client: visibleClient });
   }),
 );
 
@@ -293,12 +384,24 @@ router.put(
   '/appointments/:id',
   requireRole('dono', 'recepcao', 'profissional'),
   asyncHandler(async (req, res) => {
+    if (req.user!.role === 'profissional') {
+      const existing = await appointments.getAppointment(salonId(req), req.params.id);
+      const ownId = req.account?.professionalId;
+      if (!existing || existing.professionalId !== ownId) {
+        res.status(403).json({ error: 'Acesso negado para este papel' });
+        return;
+      }
+      assertProfessionalBooking(req, req.body?.professionalId);
+    }
     const appointment = await appointments.updateAppointment(
       salonId(req),
       req.params.id,
       req.body,
+      undefined,
+      req.user!.role === 'profissional' ? { conflictMessage: OPAQUE_CONFLICT } : undefined,
     );
-    res.json({ appointment });
+    const [presented] = await presentAppointments(req, [appointment]);
+    res.json({ appointment: presented });
   }),
 );
 
@@ -316,6 +419,26 @@ router.patch(
       clientId = mine.id;
     }
 
+    if (req.user!.role === 'profissional') {
+      const existing = await appointments.getAppointment(salonId(req), req.params.id);
+      const ownId = req.account?.professionalId;
+      if (!existing || existing.professionalId !== ownId) {
+        res.status(403).json({ error: 'Acesso negado para este papel' });
+        return;
+      }
+      const nextStatus = String(req.body.status ?? '');
+      const operational = ['confirmado', 'em_atendimento', 'concluido', 'nao_compareceu'];
+      if (nextStatus === 'cancelado') {
+        if (!req.account?.permissions?.agendar) {
+          res.status(403).json({ error: 'Acesso negado para este papel' });
+          return;
+        }
+      } else if (!operational.includes(nextStatus)) {
+        res.status(403).json({ error: 'Acesso negado para este papel' });
+        return;
+      }
+    }
+
     const appointment = await appointments.setAppointmentStatus(
       salonId(req),
       req.params.id,
@@ -329,7 +452,8 @@ router.patch(
       req.user!.sub,
       req.user!.role,
     );
-    res.json({ appointment });
+    const [presented] = await presentAppointments(req, [appointment]);
+    res.json({ appointment: presented });
   }),
 );
 
@@ -357,7 +481,45 @@ router.get(
   '/users',
   requireRole('dono'),
   asyncHandler(async (req, res) => {
-    res.json({ users: await users.listUsers(salonId(req)) });
+    const q = typeof req.query.q === 'string' ? req.query.q : '';
+    res.json({ users: await access.listAccounts(salonId(req), q) });
+  }),
+);
+
+router.post(
+  '/users/:id/professional-access',
+  requireRole('dono'),
+  asyncHandler(async (req, res) => {
+    const user = await access.grantProfessionalAccess(
+      salonId(req),
+      req.user!.sub,
+      req.params.id,
+      req.body ?? {},
+    );
+    res.status(201).json({ user });
+  }),
+);
+
+router.patch(
+  '/users/:id/professional-access',
+  requireRole('dono'),
+  asyncHandler(async (req, res) => {
+    const user = await access.updateProfessionalAccess(
+      salonId(req),
+      req.user!.sub,
+      req.params.id,
+      req.body ?? {},
+    );
+    res.json({ user });
+  }),
+);
+
+router.delete(
+  '/users/:id/professional-access',
+  requireRole('dono'),
+  asyncHandler(async (req, res) => {
+    const user = await access.revokeProfessionalAccess(salonId(req), req.params.id);
+    res.json({ user });
   }),
 );
 

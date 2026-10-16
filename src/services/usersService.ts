@@ -10,7 +10,7 @@ export type UserDTO = {
   name: string;
   email: string;
   phone: string;
-  role: 'dono' | 'recepcao' | 'profissional';
+  role: 'dono' | 'recepcao' | 'profissional' | 'cliente';
   active: boolean;
 };
 
@@ -29,8 +29,6 @@ type UserRow = {
   role: UserDTO['role'];
   active: boolean;
 };
-
-const ROLES: UserDTO['role'][] = ['dono', 'recepcao', 'profissional'];
 
 function db(pool?: Pool) {
   return pool ?? getPool();
@@ -111,7 +109,10 @@ export async function createUser(
   if (!input.password || input.password.length < 8) {
     throw new HttpError(400, 'A senha deve ter pelo menos 8 caracteres.');
   }
-  if (!ROLES.includes(input.role as UserDTO['role'])) {
+  if (input.role === 'profissional') {
+    throw new HttpError(400, 'Conceda o acesso de profissional numa conta de cliente.');
+  }
+  if (input.role !== 'dono' && input.role !== 'recepcao') {
     throw new HttpError(400, 'Papel inválido.');
   }
 
@@ -141,7 +142,10 @@ export async function updateUser(
 ): Promise<UserDTO> {
   const name = input.name?.trim() ?? '';
   if (name.length < 2) throw new HttpError(400, 'Informe o nome do usuário.');
-  if (!ROLES.includes(input.role as UserDTO['role'])) {
+  if (input.role === 'profissional') {
+    throw new HttpError(400, 'Conceda o acesso de profissional numa conta de cliente.');
+  }
+  if (input.role !== 'dono' && input.role !== 'recepcao') {
     throw new HttpError(400, 'Papel inválido.');
   }
 
@@ -156,7 +160,7 @@ export async function updateUser(
       `UPDATE users
        SET name = $3, role = $4, password_hash = $5, phone = $6, updated_at = NOW()
        WHERE id = $1 AND salon_id = $2
-         AND role IN ('dono', 'recepcao', 'profissional')
+         AND role IN ('dono', 'recepcao')
        RETURNING id, name, email, phone, role, active`,
       [id, salonId, name, input.role, passwordHash, phone],
     );
@@ -168,7 +172,7 @@ export async function updateUser(
     `UPDATE users
      SET name = $3, role = $4, phone = $5, updated_at = NOW()
      WHERE id = $1 AND salon_id = $2
-       AND role IN ('dono', 'recepcao', 'profissional')
+       AND role IN ('dono', 'recepcao')
      RETURNING id, name, email, phone, role, active`,
     [id, salonId, name, input.role, phone],
   );
@@ -189,7 +193,7 @@ export async function setUserActive(
   const result = await db(pool).query<UserRow>(
     `UPDATE users SET active = $3, updated_at = NOW()
      WHERE id = $1 AND salon_id = $2
-       AND role IN ('dono', 'recepcao', 'profissional')
+       AND role IN ('dono', 'recepcao', 'profissional', 'cliente')
      RETURNING id, name, email, phone, role, active`,
     [id, salonId, active],
   );
