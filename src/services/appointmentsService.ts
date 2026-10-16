@@ -76,6 +76,7 @@ async function assertNoOverlap(
   endsAt: Date,
   ignoreId: string | undefined,
   pool?: Pool,
+  conflictMessage = 'Conflito de horário para este profissional.',
 ): Promise<void> {
   const result = await db(pool).query(
     `SELECT id FROM appointments
@@ -88,7 +89,7 @@ async function assertNoOverlap(
     [professionalId, startsAt, endsAt, ignoreId ?? null],
   );
   if (result.rows[0]) {
-    throw new HttpError(409, 'Conflito de horário para este profissional.');
+    throw new HttpError(409, conflictMessage);
   }
 }
 
@@ -212,6 +213,21 @@ export async function listAppointments(
   return result.rows.map(mapAppointment);
 }
 
+export async function getAppointment(
+  salonId: string,
+  id: string,
+  pool?: Pool,
+): Promise<AppointmentDTO | null> {
+  const result = await db(pool).query<AppointmentRow>(
+    `SELECT id, client_id, professional_id, service_id, starts_at, ends_at,
+            status, notes, service_price_snapshot, service_duration_snapshot
+     FROM appointments
+     WHERE id = $1 AND salon_id = $2`,
+    [id, salonId],
+  );
+  return result.rows[0] ? mapAppointment(result.rows[0]) : null;
+}
+
 export async function createAppointment(
   salonId: string,
   input: {
@@ -223,6 +239,7 @@ export async function createAppointment(
     notes?: string;
   },
   pool?: Pool,
+  opts?: { conflictMessage?: string },
 ): Promise<AppointmentDTO> {
   if (!input.clientId) throw new HttpError(400, 'Selecione um cliente.');
   if (!input.date || !input.start) throw new HttpError(400, 'Informe data e horário.');
@@ -247,7 +264,7 @@ export async function createAppointment(
   const startsAt = spLocalToDate(input.date, input.start);
   const endsAt = spLocalToDate(input.date, end);
   assertNotInPast(startsAt);
-  await assertNoOverlap(professional.id, startsAt, endsAt, undefined, pool);
+  await assertNoOverlap(professional.id, startsAt, endsAt, undefined, pool, opts?.conflictMessage);
 
   const result = await db(pool).query<AppointmentRow>(
     `INSERT INTO appointments (
@@ -284,6 +301,7 @@ export async function updateAppointment(
     notes?: string;
   },
   pool?: Pool,
+  opts?: { conflictMessage?: string },
 ): Promise<AppointmentDTO> {
   const existing = await db(pool).query<AppointmentRow>(
     `SELECT id, client_id, professional_id, service_id, starts_at, ends_at,
@@ -324,7 +342,7 @@ export async function updateAppointment(
     assertNotInPast(startsAt);
   }
 
-  await assertNoOverlap(professional.id, startsAt, endsAt, id, pool);
+  await assertNoOverlap(professional.id, startsAt, endsAt, id, pool, opts?.conflictMessage);
 
   // Snapshot só muda se o serviço for trocado
   const sameService = existing.rows[0].service_id === input.serviceId;

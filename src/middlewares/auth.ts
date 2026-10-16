@@ -1,11 +1,14 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyAccessToken, AccessTokenPayload } from '../lib/jwt';
+import type { LiveAccount } from '../services/professionalAccessService';
 
 // Estende o tipo Request para incluir o usuário autenticado
 declare global {
   namespace Express {
     interface Request {
       user?: AccessTokenPayload;
+      /** Papel e permissões lidos do banco nesta requisição. */
+      account?: LiveAccount;
     }
   }
 }

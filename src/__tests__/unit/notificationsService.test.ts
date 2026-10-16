@@ -13,17 +13,22 @@ jest.mock('../../lib/whatsapp', () => ({
 jest.mock('../../services/pushService', () => ({
   sendPushToUsers: jest.fn().mockResolvedValue(undefined),
 }));
+jest.mock('../../services/notificationsInboxService', () => ({
+  recordNotifications: jest.fn().mockResolvedValue(undefined),
+}));
 
 import { listActiveStaffContacts } from '../../services/usersService';
 import { sendNewBookingEmail } from '../../lib/mailer';
 import { sendNewBookingWhatsApp } from '../../lib/whatsapp';
 import { sendPushToUsers } from '../../services/pushService';
+import { recordNotifications } from '../../services/notificationsInboxService';
 import { notifyStaffNewBooking } from '../../services/notificationsService';
 
 const mockStaff = listActiveStaffContacts as jest.MockedFunction<typeof listActiveStaffContacts>;
 const mockEmail = sendNewBookingEmail as jest.MockedFunction<typeof sendNewBookingEmail>;
 const mockWa = sendNewBookingWhatsApp as jest.MockedFunction<typeof sendNewBookingWhatsApp>;
 const mockPush = sendPushToUsers as jest.MockedFunction<typeof sendPushToUsers>;
+const mockInbox = recordNotifications as jest.MockedFunction<typeof recordNotifications>;
 
 describe('notifyStaffNewBooking', () => {
   beforeEach(() => {
@@ -51,6 +56,14 @@ describe('notifyStaffNewBooking', () => {
     expect(mockPush).toHaveBeenCalledWith(
       ['u1', 'u2'],
       expect.objectContaining({ url: '/agenda' }),
+      undefined,
+    );
+    expect(mockInbox).toHaveBeenCalledWith(
+      'salon-1',
+      [
+        expect.objectContaining({ userId: 'u1', title: 'Nova reserva', href: '/agenda' }),
+        expect.objectContaining({ userId: 'u2', title: 'Nova reserva', href: '/agenda' }),
+      ],
       undefined,
     );
   });

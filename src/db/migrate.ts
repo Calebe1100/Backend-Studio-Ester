@@ -209,6 +209,58 @@ CREATE INDEX IF NOT EXISTS idx_expenses_salon_due_date
 
 CREATE INDEX IF NOT EXISTS idx_expenses_salon_kind
   ON expenses(salon_id, kind);
+
+-- Caixa de notificações do app (sininho). seen_at nulo = ainda não vista.
+CREATE TABLE IF NOT EXISTS notifications (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  salon_id    UUID NOT NULL REFERENCES salons(id) ON DELETE CASCADE,
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title       TEXT NOT NULL,
+  body        TEXT NOT NULL,
+  href        TEXT,
+  seen_at     TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_user_unseen
+  ON notifications (user_id, created_at DESC)
+  WHERE seen_at IS NULL;
+
+-- Uma conta tem no máximo uma ficha de profissional
+CREATE UNIQUE INDEX IF NOT EXISTS idx_professionals_user_id
+  ON professionals (user_id)
+  WHERE user_id IS NOT NULL;
+
+-- Visibilidade concedida pela administradora. revoked_at nulo = acesso vigente.
+CREATE TABLE IF NOT EXISTS professional_access (
+  professional_id UUID PRIMARY KEY REFERENCES professionals(id) ON DELETE CASCADE,
+  user_id         UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  agenda_equipe   BOOLEAN NOT NULL DEFAULT FALSE,
+  cliente_contato BOOLEAN NOT NULL DEFAULT FALSE,
+  lista_clientes  BOOLEAN NOT NULL DEFAULT FALSE,
+  precos          BOOLEAN NOT NULL DEFAULT FALSE,
+  agendar         BOOLEAN NOT NULL DEFAULT TRUE,
+  granted_by      UUID REFERENCES users(id) ON DELETE SET NULL,
+  granted_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  revoked_at      TIMESTAMPTZ
+);
+
+-- Leads comerciais captados pela landing page (SalonSign). Não pertencem a um salão.
+CREATE TABLE IF NOT EXISTS leads (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT NOT NULL,
+  phone       TEXT NOT NULL,
+  email       TEXT,
+  salon_name  TEXT NOT NULL,
+  team_size   TEXT,
+  source      TEXT NOT NULL DEFAULT 'landing',
+  utm         JSONB NOT NULL DEFAULT '{}'::jsonb,
+  consent_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_leads_phone_created
+  ON leads (phone, created_at DESC);
 `;
 
 function logDatabaseTarget(databaseUrl: string): void {

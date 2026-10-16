@@ -3,8 +3,10 @@ import { getPool } from '../db/pool';
 import { env } from '../config/env';
 import { sendNewBookingEmail } from '../lib/mailer';
 import { sendNewBookingWhatsApp } from '../lib/whatsapp';
+import { dateInSP, timeInSP } from '../lib/time';
 import { listActiveStaffContacts } from './usersService';
 import { sendPushToUsers } from './pushService';
+import { recordNotifications } from './notificationsInboxService';
 
 export type NewBookingNotifyPayload = {
   clientName: string;
@@ -73,7 +75,18 @@ export async function notifyStaffNewBooking(
       pool,
     );
 
-    const results = await Promise.allSettled([...emailJobs, ...whatsappJobs, pushJob]);
+    const inboxJob = recordNotifications(
+      salonId,
+      staff.map((person) => ({
+        userId: person.id,
+        title: 'Nova reserva',
+        body,
+        href: '/agenda',
+      })),
+      pool,
+    );
+
+    const results = await Promise.allSettled([...emailJobs, ...whatsappJobs, pushJob, inboxJob]);
     for (const result of results) {
       if (result.status === 'rejected') {
         console.error('[notify] Canal falhou:', result.reason);
@@ -81,5 +94,90 @@ export async function notifyStaffNewBooking(
     }
   } catch (err) {
     console.error('[notify] Erro ao notificar equipe:', err);
+  }
+}
+
+const CLIENT_STATUS_TITLE: Record<string, string> = {
+  agendado: 'Horário agendado',
+  confirmado: 'Horário confirmado',
+  em_atendimento: 'Atendimento iniciado',
+  concluido: 'Atendimento concluído',
+  cancelado: 'Horário cancelado',
+  nao_compareceu: 'Falta registrada',
+};
+
+const STAFF_STATUS_TITLE: Record<string, string> = {
+  confirmado: 'Cliente confirmou',
+  cancelado: 'Cliente cancelou',
+};
+
+/**
+ * Avisa no sininho quem não fez a mudança.
+ * Cliente altera o próprio horário → equipe. Equipe altera → cliente com login.
+ * Nunca lança.
+ */
+export async function notifyAppointmentStatusChanged(
+  salonId: string,
+  appointmentId: string,
+  actorUserId: string,
+  actorRole: string,
+  pool?: Pool,
+): Promise<void> {
+  try {
+    const result = await (pool ?? getPool()).query<{
+      client_name: string;
+      client_user_id: string | null;
+      service_name: string;
+      professional_name: string;
+      starts_at: Date;
+      status: string;
+    }>(
+      `SELECT c.name AS client_name, c.user_id AS client_user_id,
+              s.name AS service_name, p.name AS professional_name,
+              a.starts_at, a.status
+       FROM appointments a
+       JOIN clients c ON c.id = a.client_id
+       JOIN services s ON s.id = a.service_id
+       JOIN professionals p ON p.id = a.professional_id
+       WHERE a.id = $1 AND a.salon_id = $2`,
+      [appointmentId, salonId],
+    );
+    const row = result.rows[0];
+    if (!row) return;
+
+    const when = `${formatDateBr(dateInSP(row.starts_at))} às ${timeInSP(row.starts_at)}`;
+
+    if (actorRole === 'cliente') {
+      const staff = await listActiveStaffContacts(salonId, pool ?? getPool());
+      await recordNotifications(
+        salonId,
+        staff
+          .filter((person) => person.id !== actorUserId)
+          .map((person) => ({
+            userId: person.id,
+            title: STAFF_STATUS_TITLE[row.status] ?? 'Horário atualizado',
+            body: `${row.client_name} · ${row.service_name} · ${when}`,
+            href: '/agenda',
+          })),
+        pool,
+      );
+      return;
+    }
+
+    if (!row.client_user_id || row.client_user_id === actorUserId) return;
+    await recordNotifications(
+      salonId,
+      [
+        {
+          userId: row.client_user_id,
+          title: CLIENT_STATUS_TITLE[row.status] ?? 'Horário atualizado',
+          body: `${row.service_name} com ${row.professional_name} · ${when}`,
+          href: '/agendamentos',
+        },
+      ],
+      pool,
+    );
+  } catch (err) {
+    console.error('[notify] Erro ao registrar mudança de status:', err);
   }
 }
