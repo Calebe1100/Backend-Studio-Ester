@@ -9,7 +9,11 @@ import * as users from '../services/usersService';
 import * as totals from '../services/totalsService';
 import * as expenses from '../services/expensesService';
 import * as balance from '../services/balanceService';
-import { notifyStaffNewBooking } from '../services/notificationsService';
+import {
+  notifyAppointmentStatusChanged,
+  notifyStaffNewBooking,
+} from '../services/notificationsService';
+import * as inbox from '../services/notificationsInboxService';
 import * as push from '../services/pushService';
 import { env } from '../config/env';
 
@@ -319,7 +323,32 @@ router.patch(
       undefined,
       clientId,
     );
+    void notifyAppointmentStatusChanged(
+      salonId(req),
+      appointment.id,
+      req.user!.sub,
+      req.user!.role,
+    );
     res.json({ appointment });
+  }),
+);
+
+router.get(
+  '/notifications',
+  requireRole('dono', 'recepcao', 'profissional', 'cliente'),
+  asyncHandler(async (req, res) => {
+    const notifications = await inbox.listUnseenNotifications(salonId(req), req.user!.sub);
+    res.json({ notifications });
+  }),
+);
+
+router.post(
+  '/notifications/seen',
+  requireRole('dono', 'recepcao', 'profissional', 'cliente'),
+  asyncHandler(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : undefined;
+    await inbox.markNotificationsSeen(salonId(req), req.user!.sub, ids);
+    res.json({ ok: true });
   }),
 );
 

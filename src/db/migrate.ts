@@ -209,6 +209,22 @@ CREATE INDEX IF NOT EXISTS idx_expenses_salon_due_date
 
 CREATE INDEX IF NOT EXISTS idx_expenses_salon_kind
   ON expenses(salon_id, kind);
+
+-- Caixa de notificações do app (sininho). seen_at nulo = ainda não vista.
+CREATE TABLE IF NOT EXISTS notifications (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  salon_id    UUID NOT NULL REFERENCES salons(id) ON DELETE CASCADE,
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title       TEXT NOT NULL,
+  body        TEXT NOT NULL,
+  href        TEXT,
+  seen_at     TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_user_unseen
+  ON notifications (user_id, created_at DESC)
+  WHERE seen_at IS NULL;
 `;
 
 function logDatabaseTarget(databaseUrl: string): void {
