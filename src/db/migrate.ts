@@ -244,6 +244,23 @@ CREATE TABLE IF NOT EXISTS professional_access (
   granted_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   revoked_at      TIMESTAMPTZ
 );
+
+-- Leads comerciais captados pela landing page (SalonSign). Não pertencem a um salão.
+CREATE TABLE IF NOT EXISTS leads (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT NOT NULL,
+  phone       TEXT NOT NULL,
+  email       TEXT,
+  salon_name  TEXT NOT NULL,
+  team_size   TEXT,
+  source      TEXT NOT NULL DEFAULT 'landing',
+  utm         JSONB NOT NULL DEFAULT '{}'::jsonb,
+  consent_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_leads_phone_created
+  ON leads (phone, created_at DESC);
 `;
 
 function logDatabaseTarget(databaseUrl: string): void {

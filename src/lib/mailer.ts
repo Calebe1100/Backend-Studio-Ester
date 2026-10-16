@@ -91,3 +91,76 @@ export async function sendNewBookingEmail(
 
   logSimulatedMail(info, 'e-mail de nova reserva');
 }
+
+export type NewLeadEmailDetails = {
+  name: string;
+  phone: string;
+  email: string | null;
+  salonName: string;
+  teamSize: string | null;
+  source: string;
+  utm: Record<string, string>;
+};
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** Aviso interno de novo lead comercial vindo da landing page. */
+export async function sendNewLeadEmail(
+  toEmail: string,
+  details: NewLeadEmailDetails,
+): Promise<void> {
+  const transporter = createTransporter();
+  const from = env.salon.email || env.smtp.user;
+  const utmText = Object.entries(details.utm)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(', ');
+  const waLink = `https://wa.me/55${details.phone}`;
+
+  const lines = [
+    'Novo lead da landing page SalonSign',
+    '',
+    `Nome: ${details.name}`,
+    `WhatsApp: ${details.phone} (${waLink})`,
+    `E-mail: ${details.email ?? '—'}`,
+    `Salão: ${details.salonName}`,
+    `Equipe: ${details.teamSize ?? '—'}`,
+    `Origem: ${details.source}${utmText ? ` (${utmText})` : ''}`,
+  ];
+
+  const row = (label: string, value: string) =>
+    `<li><strong>${label}:</strong> ${escapeHtml(value)}</li>`;
+
+  const info = await transporter.sendMail({
+    from: `"SalonSign" <${from}>`,
+    to: toEmail,
+    subject: `SalonSign — Novo lead: ${details.salonName}`,
+    text: lines.join('\n'),
+    html: `
+      <div style="font-family:sans-serif;max-width:480px;margin:auto">
+        <h2 style="color:#3b1f3a">Novo lead da landing page</h2>
+        <ul style="padding-left:18px;line-height:1.6">
+          ${row('Nome', details.name)}
+          ${row('WhatsApp', details.phone)}
+          ${row('E-mail', details.email ?? '—')}
+          ${row('Salão', details.salonName)}
+          ${row('Equipe', details.teamSize ?? '—')}
+          ${row('Origem', `${details.source}${utmText ? ` (${utmText})` : ''}`)}
+        </ul>
+        <p>
+          <a href="${waLink}"
+             style="display:inline-block;padding:12px 24px;background:#e9607a;color:#fff;border-radius:999px;text-decoration:none">
+            Chamar no WhatsApp
+          </a>
+        </p>
+      </div>
+    `,
+  });
+
+  logSimulatedMail(info, 'e-mail de novo lead');
+}

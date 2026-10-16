@@ -13,19 +13,25 @@ export function createApp() {
     'https://app-studio-ester-rodrigues.vercel.app',
     'https://app-studio-ester.vercel.app',
     'https://studio-ester.vercel.app',
+    // Landing page comercial (SalonSign)
+    'https://salonsign.vercel.app',
+    'https://landing-salonsign.vercel.app',
+    'https://salonsign.com.br',
+    'https://www.salonsign.com.br',
     'http://localhost:3000',
     'http://127.0.0.1:3000',
+    'http://localhost:3002',
+    'http://127.0.0.1:3002',
   ].filter(Boolean) as string[];
+
+  const vercelPrefixes = ['app-studio-ester', 'studio-ester', 'salonsign', 'landing-salonsign'];
 
   function isAllowedOrigin(origin: string): boolean {
     if (allowedOrigins.includes(origin)) return true;
     // Preview deploys da Vercel (ex: app-studio-ester-rodrigues-git-....vercel.app)
     try {
       const host = new URL(origin).hostname;
-      return (
-        host.endsWith('.vercel.app') &&
-        (host.startsWith('app-studio-ester') || host.startsWith('studio-ester'))
-      );
+      return host.endsWith('.vercel.app') && vercelPrefixes.some((p) => host.startsWith(p));
     } catch {
       return false;
     }
