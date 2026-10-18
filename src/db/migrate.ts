@@ -145,10 +145,17 @@ CREATE TABLE IF NOT EXISTS clients (
 -- Bancos já existentes: garante colunas
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS email TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'cadastrado';
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_salon_email
+ALTER TABLE clients DROP CONSTRAINT IF EXISTS clients_kind_check;
+ALTER TABLE clients ADD CONSTRAINT clients_kind_check
+  CHECK (kind IN ('cadastrado', 'visitante'));
+
+-- E-mail único só para cliente cadastrado. Visitante pode repetir e-mail de uma conta.
+DROP INDEX IF EXISTS idx_clients_salon_email;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_salon_email_cadastrado
   ON clients (salon_id, lower(email))
-  WHERE email IS NOT NULL AND email <> '';
+  WHERE email IS NOT NULL AND email <> '' AND kind = 'cadastrado';
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_user_id
   ON clients (user_id)

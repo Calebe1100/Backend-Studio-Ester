@@ -34,6 +34,7 @@ describe('cadastro público', () => {
             notes: null,
             active: true,
             user_id: 'user-b',
+            kind: 'cadastrado',
           }],
         };
       }

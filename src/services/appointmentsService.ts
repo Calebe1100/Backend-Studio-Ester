@@ -24,6 +24,21 @@ export const APPOINTMENT_STATUSES = [
   'nao_compareceu',
 ] as const;
 
+const OCCUPYING_STATUSES: AppointmentStatus[] = [
+  'agendado',
+  'confirmado',
+  'em_atendimento',
+  'concluido',
+];
+
+export type BusySlotDTO = {
+  professionalId: string;
+  date: string;
+  start: string;
+  end: string;
+  status: AppointmentStatus;
+};
+
 export type AppointmentStatus = (typeof APPOINTMENT_STATUSES)[number];
 
 export type AppointmentDTO = {
@@ -230,6 +245,33 @@ export async function listAppointments(
     params,
   );
   return result.rows.map((row) => mapAppointment(row, timeZone));
+}
+
+/** Ocupação para o wizard público: sem cliente, serviço ou observações. */
+export async function listBusySlots(
+  salonId: string,
+  opts: { professionalId?: string; from: string; to: string },
+  pool?: Pool,
+): Promise<BusySlotDTO[]> {
+  if (!opts.from || !opts.to) throw new HttpError(400, 'Informe o período da agenda.');
+  const list = await listAppointments(
+    salonId,
+    {
+      from: opts.from,
+      to: opts.to,
+      professionalId: opts.professionalId,
+    },
+    pool,
+  );
+  return list
+    .filter((item) => OCCUPYING_STATUSES.includes(item.status))
+    .map((item) => ({
+      professionalId: item.professionalId,
+      date: item.date,
+      start: item.start,
+      end: item.end,
+      status: item.status,
+    }));
 }
 
 export async function getAppointment(

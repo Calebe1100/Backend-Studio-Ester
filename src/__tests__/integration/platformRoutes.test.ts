@@ -125,6 +125,7 @@ describe('slug do salão', () => {
         notes: '',
         active: true,
         userId: 'user-b',
+        kind: 'cadastrado',
       },
       userId: 'user-b',
     });
