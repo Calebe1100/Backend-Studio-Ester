@@ -9,6 +9,8 @@ import {
 } from '../services/authService';
 import { OTP_TTL_MINUTES, sendPasswordResetCode } from '../lib/otp';
 import { isValidBrPhone } from '../lib/phone';
+import { asyncHandler } from '../lib/asyncHandler';
+import { requirePublicSalon } from '../middlewares/salon';
 
 const router = Router();
 
@@ -18,7 +20,7 @@ const router = Router();
  * `identifier` aceita e-mail ou telefone. `email` e `phone` seguem aceitos.
  * Response: { accessToken, refreshToken, expiresIn, user }
  */
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', asyncHandler(requirePublicSalon), async (req: Request, res: Response) => {
   const body = req.body ?? {};
   const identifier = String(body.identifier ?? body.email ?? body.phone ?? '').trim();
   const password = body.password;
@@ -34,7 +36,7 @@ router.post('/login', async (req: Request, res: Response) => {
   }
 
   try {
-    const result = await login(identifier, password);
+    const result = await login(identifier, password, req.salon!.id);
     res.status(200).json(result);
   } catch (err: unknown) {
     const e = err as { statusCode?: number; message: string };
@@ -92,7 +94,7 @@ router.post('/logout', async (req: Request, res: Response) => {
  * Envia um código de 6 dígitos por WhatsApp (com fallback por SMS).
  * Response: 200 (sempre, sem revelar se o celular existe)
  */
-router.post('/forgot-password', async (req: Request, res: Response) => {
+router.post('/forgot-password', asyncHandler(requirePublicSalon), async (req: Request, res: Response) => {
   const { phone } = req.body ?? {};
 
   if (!phone) {
@@ -107,9 +109,9 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
   };
 
   try {
-    const result = await createPasswordResetCode(phone);
+    const result = await createPasswordResetCode(phone, req.salon!.id);
     if (result) {
-      await sendPasswordResetCode(phone, result.code);
+      await sendPasswordResetCode(phone, result.code, req.salon!.name);
     }
     res.status(200).json(genericResponse);
   } catch (err) {
@@ -123,7 +125,7 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
  * Body: { phone: string, code: string }
  * Response: { resetToken, expiresIn } — usado no POST /reset-password
  */
-router.post('/verify-reset-code', async (req: Request, res: Response) => {
+router.post('/verify-reset-code', asyncHandler(requirePublicSalon), async (req: Request, res: Response) => {
   const { phone, code } = req.body ?? {};
 
   if (!phone || !code) {
@@ -132,7 +134,7 @@ router.post('/verify-reset-code', async (req: Request, res: Response) => {
   }
 
   try {
-    const result = await verifyPasswordResetCode(phone, code);
+    const result = await verifyPasswordResetCode(phone, code, req.salon!.id);
     res.status(200).json(result);
   } catch (err: unknown) {
     const e = err as { statusCode?: number; message: string };

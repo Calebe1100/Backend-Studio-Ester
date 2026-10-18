@@ -3,7 +3,8 @@ import { getPool } from '../db/pool';
 import { env } from '../config/env';
 import { sendNewBookingEmail } from '../lib/mailer';
 import { sendNewBookingWhatsApp } from '../lib/whatsapp';
-import { dateInSP, timeInSP } from '../lib/time';
+import { dateInZone, DEFAULT_SALON_TIMEZONE, timeInZone } from '../lib/time';
+import { getSalonById } from './salonsService';
 import { listActiveStaffContacts } from './usersService';
 import { sendPushToUsers } from './pushService';
 import { recordNotifications } from './notificationsInboxService';
@@ -40,22 +41,32 @@ export async function notifyStaffNewBooking(
     const staff = await listActiveStaffContacts(salonId, pool ?? getPool());
     if (staff.length === 0) return;
 
+    const salon = await getSalonById(salonId, pool);
+    const salonName = salon?.name || 'Salão';
     const agendaUrl = `${frontendBaseUrl()}/agenda`;
     const dateLabel = formatDateBr(payload.date);
-    const title = `${env.salon.name} — Nova reserva`;
+    const title = `${salonName} — Nova reserva`;
     const body = `${payload.clientName} · ${payload.serviceName} · ${dateLabel} às ${payload.start}`;
 
     const emailJobs = staff
       .filter((s) => s.email)
       .map((s) =>
-        sendNewBookingEmail(s.email, {
-          clientName: payload.clientName,
-          serviceName: payload.serviceName,
-          professionalName: payload.professionalName,
-          date: dateLabel,
-          start: payload.start,
-          agendaUrl,
-        }),
+        sendNewBookingEmail(
+          s.email,
+          {
+            clientName: payload.clientName,
+            serviceName: payload.serviceName,
+            professionalName: payload.professionalName,
+            date: dateLabel,
+            start: payload.start,
+            agendaUrl,
+          },
+          {
+            name: salonName,
+            email: salon?.contactEmail,
+            brandColor: salon?.brandColor,
+          },
+        ),
       );
 
     const whatsappJobs = staff
@@ -145,7 +156,9 @@ export async function notifyAppointmentStatusChanged(
     const row = result.rows[0];
     if (!row) return;
 
-    const when = `${formatDateBr(dateInSP(row.starts_at))} às ${timeInSP(row.starts_at)}`;
+    const salon = await getSalonById(salonId, pool);
+    const timeZone = salon?.timezone || DEFAULT_SALON_TIMEZONE;
+    const when = `${formatDateBr(dateInZone(row.starts_at, timeZone))} às ${timeInZone(row.starts_at, timeZone)}`;
 
     if (actorRole === 'cliente') {
       const staff = await listActiveStaffContacts(salonId, pool ?? getPool());

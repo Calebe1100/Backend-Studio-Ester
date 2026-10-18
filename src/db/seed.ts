@@ -1,11 +1,12 @@
 /**
- * Seed — provisiona o salão fixo e o usuário dono inicial.
+ * Seed — provisiona o tenant Studio Ana Ester e o usuário dono inicial.
  * Execute com: npm run seed
  *
- * Seguro para rodar múltiplas vezes (idempotente).
+ * Seguro para rodar múltiplas vezes (idempotente por slug).
  */
 import bcrypt from 'bcrypt';
 import { getPool, closePool } from './pool';
+import { ANA_ESTER_BRAND_COLOR, ANA_ESTER_ORIGINS, ANA_ESTER_SLUG } from '../services/salonsService';
 
 const SALON_NAME = process.env.SALON_NAME ?? 'Studio Ana Ester';
 const SALON_EMAIL = process.env.SALON_EMAIL ?? 'contato@studioester.com.br';
@@ -18,13 +19,16 @@ async function seed() {
   const pool = getPool();
   console.log('⏳ Executando seed...');
 
-  // 1. Salão fixo
+  // 1. Tenant Ana Ester, identificado pelo slug
   const salonResult = await pool.query<{ id: string }>(
-    `INSERT INTO salons (name, phone)
-     VALUES ($1, $2)
-     ON CONFLICT DO NOTHING
+    `INSERT INTO salons (
+       name, slug, phone, timezone, currency, locale,
+       contact_email, brand_color, frontend_origins, client_cancel_lead_minutes, active
+     )
+     VALUES ($1, $2, $3, 'America/Sao_Paulo', 'BRL', 'pt-BR', $4, $5, $6, 120, TRUE)
+     ON CONFLICT (slug) DO NOTHING
      RETURNING id`,
-    [SALON_NAME, '(11) 99999-0000']
+    [SALON_NAME, ANA_ESTER_SLUG, '(11) 99999-0000', SALON_EMAIL, ANA_ESTER_BRAND_COLOR, ANA_ESTER_ORIGINS]
   );
 
   let salonId: string;
@@ -32,18 +36,18 @@ async function seed() {
     salonId = salonResult.rows[0].id;
     console.log(`  ✅ Salão criado: ${SALON_NAME} (${salonId})`);
   } else {
-    // Já existia — busca o id
     const existing = await pool.query<{ id: string }>(
-      'SELECT id FROM salons LIMIT 1'
+      'SELECT id FROM salons WHERE slug = $1',
+      [ANA_ESTER_SLUG]
     );
     salonId = existing.rows[0].id;
-    console.log(`  ℹ️  Salão já existia: ${salonId}`);
+    console.log(`  ℹ️  Salão já existia: ${ANA_ESTER_SLUG} (${salonId})`);
   }
 
-  // 2. Usuário dono
+  // 2. Usuário dono deste salão
   const existingUser = await pool.query<{ id: string }>(
-    'SELECT id FROM users WHERE email = $1',
-    [OWNER_EMAIL]
+    'SELECT id FROM users WHERE salon_id = $1 AND lower(email) = lower($2)',
+    [salonId, OWNER_EMAIL]
   );
 
   if (existingUser.rows.length > 0) {

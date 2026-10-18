@@ -40,6 +40,15 @@ let passwordHashes: Record<string, string> = {};
 
 const mockQuery = jest.fn();
 const mockPool = { query: mockQuery } as unknown as import('pg').Pool;
+const SALON = 'salon-test-uuid';
+
+function requestCode(phone: string, pool: import('pg').Pool = mockPool) {
+  return createPasswordResetCode(phone, SALON, pool);
+}
+
+function confirmCode(phone: string, code: string, pool: import('pg').Pool = mockPool) {
+  return verifyPasswordResetCode(phone, code, SALON, pool);
+}
 
 /** Reproduz o regexp_replace usado na consulta por telefone. */
 function digitsOf(phone: string | null): string {
@@ -176,7 +185,7 @@ beforeEach(() => {
 
 describe('createPasswordResetCode', () => {
   it('gera código de 6 dígitos para o telefone da equipe', async () => {
-    const result = await createPasswordResetCode('(11) 98888-7777', mockPool);
+    const result = await requestCode('(11) 98888-7777', mockPool);
 
     expect(result).not.toBeNull();
     expect(result!.userId).toBe('staff-1');
@@ -187,43 +196,43 @@ describe('createPasswordResetCode', () => {
   });
 
   it('encontra cliente pelo telefone salvo com máscara em clients', async () => {
-    const result = await createPasswordResetCode('21977771234', mockPool);
+    const result = await requestCode('21977771234', mockPool);
     expect(result!.userId).toBe('client-1');
   });
 
   it('aceita o número digitado com DDI', async () => {
-    const result = await createPasswordResetCode('+55 11 98888-7777', mockPool);
+    const result = await requestCode('+55 11 98888-7777', mockPool);
     expect(result!.userId).toBe('staff-1');
   });
 
   it('retorna null para telefone não cadastrado, inválido ou de usuário inativo', async () => {
-    expect(await createPasswordResetCode('11900000000', mockPool)).toBeNull();
-    expect(await createPasswordResetCode('123', mockPool)).toBeNull();
-    expect(await createPasswordResetCode('11955554444', mockPool)).toBeNull();
+    expect(await requestCode('11900000000', mockPool)).toBeNull();
+    expect(await requestCode('123', mockPool)).toBeNull();
+    expect(await requestCode('11955554444', mockPool)).toBeNull();
   });
 
   it('invalida o código anterior a cada novo pedido', async () => {
-    const first = await createPasswordResetCode('11988887777', mockPool);
-    await createPasswordResetCode('11988887777', mockPool);
+    const first = await requestCode('11988887777', mockPool);
+    await requestCode('11988887777', mockPool);
 
     expect(codes[0].used_at).not.toBeNull();
     await expect(
-      verifyPasswordResetCode('11988887777', first!.code, mockPool),
+      confirmCode('11988887777', first!.code, mockPool),
     ).rejects.toMatchObject({ statusCode: 400 });
   });
 
   it('para de enviar após o limite por hora', async () => {
     for (let i = 0; i < OTP_MAX_PER_HOUR; i++) {
-      expect(await createPasswordResetCode('11988887777', mockPool)).not.toBeNull();
+      expect(await requestCode('11988887777', mockPool)).not.toBeNull();
     }
-    expect(await createPasswordResetCode('11988887777', mockPool)).toBeNull();
+    expect(await requestCode('11988887777', mockPool)).toBeNull();
   });
 });
 
 describe('verifyPasswordResetCode', () => {
   it('devolve token de redefinição para o código correto', async () => {
-    const created = await createPasswordResetCode('11988887777', mockPool);
-    const result = await verifyPasswordResetCode('11988887777', created!.code, mockPool);
+    const created = await requestCode('11988887777', mockPool);
+    const result = await confirmCode('11988887777', created!.code, mockPool);
 
     expect(result.resetToken).toBeDefined();
     expect(result.expiresIn).toBe(15 * 60);
@@ -234,46 +243,46 @@ describe('verifyPasswordResetCode', () => {
   });
 
   it('rejeita código errado e conta a tentativa', async () => {
-    const created = await createPasswordResetCode('11988887777', mockPool);
+    const created = await requestCode('11988887777', mockPool);
     const wrong = created!.code === '000000' ? '111111' : '000000';
 
-    await expect(verifyPasswordResetCode('11988887777', wrong, mockPool)).rejects.toMatchObject({
+    await expect(confirmCode('11988887777', wrong, mockPool)).rejects.toMatchObject({
       statusCode: 400,
     });
     expect(codes[0].attempts).toBe(1);
   });
 
   it('invalida o código após muitas tentativas erradas (429)', async () => {
-    const created = await createPasswordResetCode('11988887777', mockPool);
+    const created = await requestCode('11988887777', mockPool);
     const wrong = created!.code === '000000' ? '111111' : '000000';
 
     for (let i = 0; i < OTP_MAX_ATTEMPTS - 1; i++) {
-      await expect(verifyPasswordResetCode('11988887777', wrong, mockPool)).rejects.toMatchObject({
+      await expect(confirmCode('11988887777', wrong, mockPool)).rejects.toMatchObject({
         statusCode: 400,
       });
     }
-    await expect(verifyPasswordResetCode('11988887777', wrong, mockPool)).rejects.toMatchObject({
+    await expect(confirmCode('11988887777', wrong, mockPool)).rejects.toMatchObject({
       statusCode: 429,
     });
 
     // Nem o código correto vale mais
     await expect(
-      verifyPasswordResetCode('11988887777', created!.code, mockPool),
+      confirmCode('11988887777', created!.code, mockPool),
     ).rejects.toMatchObject({ statusCode: 400 });
   });
 
   it('rejeita código expirado', async () => {
-    const created = await createPasswordResetCode('11988887777', mockPool);
+    const created = await requestCode('11988887777', mockPool);
     codes[0].expires_at = new Date(Date.now() - 1000);
 
     await expect(
-      verifyPasswordResetCode('11988887777', created!.code, mockPool),
+      confirmCode('11988887777', created!.code, mockPool),
     ).rejects.toMatchObject({ statusCode: 400 });
   });
 
   it('rejeita código com formato inválido sem tocar no banco', async () => {
-    await createPasswordResetCode('11988887777', mockPool);
-    await expect(verifyPasswordResetCode('11988887777', '123', mockPool)).rejects.toMatchObject({
+    await requestCode('11988887777', mockPool);
+    await expect(confirmCode('11988887777', '123', mockPool)).rejects.toMatchObject({
       statusCode: 400,
     });
     expect(codes[0].attempts).toBe(0);
@@ -284,8 +293,8 @@ describe('fluxo completo até a nova senha', () => {
   it('troca a senha, consome o token e revoga as sessões abertas', async () => {
     passwordHashes['staff-1'] = await hashPassword('SenhaAntiga123');
 
-    const created = await createPasswordResetCode('(11) 98888-7777', mockPool);
-    const { resetToken } = await verifyPasswordResetCode('11988887777', created!.code, mockPool);
+    const created = await requestCode('(11) 98888-7777', mockPool);
+    const { resetToken } = await confirmCode('11988887777', created!.code, mockPool);
     await resetPassword(resetToken, 'NovaSenha123', mockPool);
 
     expect(await comparePassword('NovaSenha123', passwordHashes['staff-1'])).toBe(true);
@@ -299,8 +308,8 @@ describe('fluxo completo até a nova senha', () => {
   });
 
   it('recusa senha curta', async () => {
-    const created = await createPasswordResetCode('11988887777', mockPool);
-    const { resetToken } = await verifyPasswordResetCode('11988887777', created!.code, mockPool);
+    const created = await requestCode('11988887777', mockPool);
+    const { resetToken } = await confirmCode('11988887777', created!.code, mockPool);
 
     await expect(resetPassword(resetToken, '123', mockPool)).rejects.toMatchObject({
       statusCode: 400,

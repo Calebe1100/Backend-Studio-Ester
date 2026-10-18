@@ -1,6 +1,7 @@
 import { Router, Request } from 'express';
 import { verifyToken, requireRole } from '../middlewares/auth';
 import { attachLiveAccount } from '../middlewares/account';
+import { requireSessionSalon } from '../middlewares/salon';
 import { asyncHandler } from '../lib/asyncHandler';
 import { HttpError } from '../lib/httpError';
 import * as clients from '../services/clientsService';
@@ -19,10 +20,12 @@ import {
 import * as inbox from '../services/notificationsInboxService';
 import * as push from '../services/pushService';
 import { env } from '../config/env';
+import { dateInZone, DEFAULT_SALON_TIMEZONE } from '../lib/time';
 
 const router = Router();
 
 router.use(verifyToken);
+router.use(asyncHandler(requireSessionSalon));
 router.use(asyncHandler(attachLiveAccount));
 
 const OPAQUE_CONFLICT = 'Horário indisponível.';
@@ -682,9 +685,7 @@ router.get(
   '/dashboard',
   requireRole('dono'),
   asyncHandler(async (req, res) => {
-    const today = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Sao_Paulo',
-    }).format(new Date());
+    const today = dateInZone(new Date(), req.salon?.timezone ?? DEFAULT_SALON_TIMEZONE);
     const monthStart = `${today.slice(0, 8)}01`;
     const [dayAppointments, dayTotals, monthBalance] = await Promise.all([
       appointments.listAppointments(salonId(req), { date: today }),

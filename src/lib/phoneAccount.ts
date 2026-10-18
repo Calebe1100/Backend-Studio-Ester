@@ -13,7 +13,7 @@ export function phoneDigitsSql(column: string): string {
 export async function findUserIdByPhone(
   db: Pool,
   phone: string,
-  options?: { activeOnly?: boolean; excludeUserId?: string },
+  options: { salonId: string; activeOnly?: boolean; excludeUserId?: string },
 ): Promise<string | null> {
   const variants = phoneLookupVariants(phone);
   if (variants.length === 0) return null;
@@ -21,8 +21,9 @@ export async function findUserIdByPhone(
   const result = await db.query<{ id: string }>(
     `SELECT u.id
        FROM users u
-       LEFT JOIN clients c ON c.user_id = u.id
-      WHERE ($2::boolean = FALSE OR u.active = TRUE)
+       LEFT JOIN clients c ON c.user_id = u.id AND c.salon_id = u.salon_id
+      WHERE u.salon_id = $4
+        AND ($2::boolean = FALSE OR u.active = TRUE)
         AND ($3::text IS NULL OR u.id::text <> $3)
         AND (
           ${phoneDigitsSql('u.phone')} = ANY($1::text[])
@@ -30,7 +31,7 @@ export async function findUserIdByPhone(
         )
       ORDER BY u.created_at ASC
       LIMIT 1`,
-    [variants, options?.activeOnly ?? false, options?.excludeUserId ?? null],
+    [variants, options.activeOnly ?? false, options.excludeUserId ?? null, options.salonId],
   );
 
   return result.rows[0]?.id ?? null;

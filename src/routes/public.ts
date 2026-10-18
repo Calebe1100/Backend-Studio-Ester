@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { asyncHandler } from '../lib/asyncHandler';
 import { clientIp, createRateLimiter } from '../lib/rateLimit';
+import { requirePublicSalon } from '../middlewares/salon';
 import * as clients from '../services/clientsService';
 import * as leads from '../services/leadsService';
 
@@ -13,8 +14,9 @@ const router = Router();
  */
 router.post(
   '/clients/register',
+  asyncHandler(requirePublicSalon),
   asyncHandler(async (req, res) => {
-    const { client } = await clients.registerClientAccess(req.body ?? {});
+    const { client } = await clients.registerClientAccess(req.body ?? {}, req.salon!.id);
     res.status(201).json({
       message: 'Conta criada com sucesso. Faça login para continuar.',
       client: {

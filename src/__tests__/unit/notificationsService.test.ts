@@ -16,6 +16,14 @@ jest.mock('../../services/pushService', () => ({
 jest.mock('../../services/notificationsInboxService', () => ({
   recordNotifications: jest.fn().mockResolvedValue(undefined),
 }));
+jest.mock('../../services/salonsService', () => ({
+  getSalonById: jest.fn().mockResolvedValue({
+    name: 'Studio Ana Ester',
+    brandColor: '#7c2d3e',
+    contactEmail: 'contato@studioester.com.br',
+    timezone: 'America/Sao_Paulo',
+  }),
+}));
 
 import { listActiveStaffContacts } from '../../services/usersService';
 import { sendNewBookingEmail } from '../../lib/mailer';

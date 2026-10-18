@@ -58,13 +58,14 @@ function assertEmail(email: string | null, required: boolean) {
 
 async function requireUniquePhone(
   raw: string | null | undefined,
+  salonId: string,
   pool?: Pool,
   excludeUserId?: string,
 ): Promise<string> {
   const phone = normalizeStoredPhone(raw);
   if (!phone) throw new HttpError(400, 'Informe um telefone válido com DDD.');
 
-  const taken = await findUserIdByPhone(db(pool), phone, { excludeUserId });
+  const taken = await findUserIdByPhone(db(pool), phone, { salonId, excludeUserId });
   if (taken) throw new HttpError(409, 'Este telefone já possui cadastro. Faça login.');
   return phone;
 }
@@ -126,10 +127,10 @@ export async function createClient(
 
   // Com e-mail: cria acesso (user role=cliente) + cliente com senha temporária
   if (email && !input.userId) {
-    const phone = await requireUniquePhone(input.phone, pool);
+    const phone = await requireUniquePhone(input.phone, salonId, pool);
     const existingUser = await db(pool).query(
-      'SELECT id FROM users WHERE lower(email) = $1 LIMIT 1',
-      [email],
+      'SELECT id FROM users WHERE salon_id = $1 AND lower(email) = $2 LIMIT 1',
+      [salonId, email],
     );
     if (existingUser.rows[0]) {
       throw new HttpError(409, 'Este e-mail já possui cadastro. Peça ao cliente para fazer login.');
@@ -209,7 +210,7 @@ export async function updateClient(
   if (!current.rows[0]) throw new HttpError(404, 'Cliente não encontrado.');
 
   const phone = current.rows[0].user_id
-    ? await requireUniquePhone(input.phone, pool, current.rows[0].user_id)
+    ? await requireUniquePhone(input.phone, salonId, pool, current.rows[0].user_id)
     : optionalPhone(input.phone);
 
   try {
@@ -275,26 +276,21 @@ export async function getClientByUserId(
  */
 export async function registerClientAccess(
   input: { name: string; phone?: string; email: string; password: string },
+  salonId: string,
   pool?: Pool,
 ): Promise<{ client: ClientDTO; userId: string }> {
   const name = input.name?.trim() ?? '';
   if (name.length < 2) throw new HttpError(400, 'Informe seu nome completo.');
   const email = normalizeEmail(input.email);
   assertEmail(email, true);
-  const phone = await requireUniquePhone(input.phone, pool);
+  const phone = await requireUniquePhone(input.phone, salonId, pool);
   if (!input.password || input.password.length < 8) {
     throw new HttpError(400, 'A senha deve ter pelo menos 8 caracteres.');
   }
 
-  const salon = await db(pool).query<{ id: string }>(
-    'SELECT id FROM salons ORDER BY created_at ASC LIMIT 1',
-  );
-  if (!salon.rows[0]) throw new HttpError(503, 'Salão ainda não configurado.');
-  const salonId = salon.rows[0].id;
-
   const existingUser = await db(pool).query(
-    'SELECT id FROM users WHERE lower(email) = $1 LIMIT 1',
-    [email],
+    'SELECT id FROM users WHERE salon_id = $1 AND lower(email) = $2 LIMIT 1',
+    [salonId, email],
   );
   if (existingUser.rows[0]) {
     throw new HttpError(409, 'Este e-mail já possui cadastro. Faça login.');
@@ -338,7 +334,7 @@ export async function updateClientProfile(
 ): Promise<ClientDTO> {
   const name = input.name?.trim() ?? '';
   if (name.length < 2) throw new HttpError(400, 'Informe seu nome completo.');
-  const phone = await requireUniquePhone(input.phone, pool, userId);
+  const phone = await requireUniquePhone(input.phone, salonId, pool, userId);
 
   const existing = await getClientByUserId(salonId, userId, pool);
   if (!existing) throw new HttpError(404, 'Perfil de cliente não encontrado.');

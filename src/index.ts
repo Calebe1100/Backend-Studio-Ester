@@ -7,7 +7,7 @@ import { isWhatsAppConfigured } from './lib/whatsapp';
 const app = createApp();
 
 app.listen(env.port, () => {
-  console.log(`🚀 Studio Ana Ester API rodando em http://localhost:${env.port}`);
+  console.log(`🚀 API de salões rodando em http://localhost:${env.port}`);
   console.log(`   Ambiente: ${env.nodeEnv}`);
 
   if (!isVapidConfigured()) {
