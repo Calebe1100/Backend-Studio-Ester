@@ -62,7 +62,7 @@ export function originAllowed(origin: string, tenantOrigins: string[], fixedOrig
   if (!host.endsWith('.vercel.app')) return false;
   if (PLATFORM_VERCEL_PREFIXES.some((prefix) => host.startsWith(prefix))) return true;
 
-  for (const stored of tenantOrigins) {
+  for (const stored of [...fixedOrigins, ...tenantOrigins]) {
     let storedHost: string;
     try {
       storedHost = new URL(stored).hostname;

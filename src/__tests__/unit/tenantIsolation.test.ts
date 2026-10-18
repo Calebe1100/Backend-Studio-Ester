@@ -133,4 +133,11 @@ describe('origens de frontend', () => {
   it('recusa um app de outro projeto', () => {
     expect(originAllowed('https://outro-salao.vercel.app', tenantOrigins, [])).toBe(false);
   });
+
+  it('aceita preview do projeto listado em FRONTEND_URL sem consultar o banco', () => {
+    const fixed = ['https://app-studio-ester-rodrigues.vercel.app'];
+    expect(
+      originAllowed('https://app-studio-ester-rodrigues-git-develop-team.vercel.app', [], fixed),
+    ).toBe(true);
+  });
 });

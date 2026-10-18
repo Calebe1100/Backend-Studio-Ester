@@ -133,6 +133,12 @@ describe('GET /api/public/catalog', () => {
       { id: 'svc-1', name: 'Corte', durationMinutes: 60, price: 120, active: true },
     ]);
   });
+
+  it('não encaminha rota pública desconhecida para o login', async () => {
+    const res = await request(app).get('/api/public/nao-existe');
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('Rota não encontrada.');
+  });
 });
 
 describe('GET /api/public/availability', () => {

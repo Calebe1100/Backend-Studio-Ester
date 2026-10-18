@@ -10,7 +10,8 @@ function buildPoolConfig(): PoolConfig {
 
   return {
     connectionString: env.databaseUrl,
-    connectionTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 5_000,
+    query_timeout: 8_000,
     ...(needsSsl ? { ssl: { rejectUnauthorized: false } } : {}),
   };
 }

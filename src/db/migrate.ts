@@ -314,6 +314,27 @@ SET frontend_origins = ARRAY[
 WHERE slug = 'ana-ester'
   AND cardinality(frontend_origins) = 0;
 
+-- Banco novo (ambiente de teste) não herda o salão da produção.
+INSERT INTO salons (
+  name, slug, timezone, currency, locale, brand_color, frontend_origins,
+  client_cancel_lead_minutes, active
+)
+SELECT
+  'Studio Ana Ester',
+  'ana-ester',
+  'America/Sao_Paulo',
+  'BRL',
+  'pt-BR',
+  '#7c2d3e',
+  ARRAY[
+    'https://app-studio-ester-rodrigues.vercel.app',
+    'https://app-studio-ester.vercel.app',
+    'https://studio-ester.vercel.app'
+  ]::text[],
+  120,
+  TRUE
+WHERE NOT EXISTS (SELECT 1 FROM salons WHERE slug = 'ana-ester');
+
 -- E-mail único por salão, não no banco inteiro.
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_salon_email
