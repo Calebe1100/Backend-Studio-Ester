@@ -6,7 +6,7 @@ import { env } from '../config/env';
 import { getPool, closePool, waitForDb } from './pool';
 
 const SQL = `
--- Salão único e fixo
+-- Um registro por salão. Vários salões convivem no mesmo banco.
 CREATE TABLE IF NOT EXISTS salons (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name        TEXT NOT NULL,
@@ -261,6 +261,56 @@ CREATE TABLE IF NOT EXISTS leads (
 
 CREATE INDEX IF NOT EXISTS idx_leads_phone_created
   ON leads (phone, created_at DESC);
+
+-- Configuração do tenant. Colunas novas em bancos que já existiam.
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS slug TEXT;
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'America/Sao_Paulo';
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'BRL';
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS locale TEXT NOT NULL DEFAULT 'pt-BR';
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS contact_email TEXT;
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS brand_color TEXT;
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS frontend_origins TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS client_cancel_lead_minutes INTEGER NOT NULL DEFAULT 120;
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- O salão mais antigo vira o tenant do app atual.
+UPDATE salons
+SET slug = 'ana-ester'
+WHERE slug IS NULL
+  AND id = (SELECT id FROM salons ORDER BY created_at ASC LIMIT 1)
+  AND NOT EXISTS (SELECT 1 FROM salons WHERE slug = 'ana-ester');
+
+UPDATE salons
+SET slug = 'salao-' || substr(replace(id::text, '-', ''), 1, 12)
+WHERE slug IS NULL;
+
+ALTER TABLE salons ALTER COLUMN slug SET NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_salons_slug ON salons (slug);
+
+UPDATE salons
+SET brand_color = '#7c2d3e'
+WHERE slug = 'ana-ester' AND brand_color IS NULL;
+
+UPDATE salons
+SET brand_color = '#4b5563'
+WHERE brand_color IS NULL;
+
+ALTER TABLE salons ALTER COLUMN brand_color SET DEFAULT '#4b5563';
+ALTER TABLE salons ALTER COLUMN brand_color SET NOT NULL;
+
+UPDATE salons
+SET frontend_origins = ARRAY[
+  'https://app-studio-ester-rodrigues.vercel.app',
+  'https://app-studio-ester.vercel.app',
+  'https://studio-ester.vercel.app'
+]::text[]
+WHERE slug = 'ana-ester'
+  AND cardinality(frontend_origins) = 0;
+
+-- E-mail único por salão, não no banco inteiro.
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_salon_email
+  ON users (salon_id, lower(email));
 `;
 
 function logDatabaseTarget(databaseUrl: string): void {
@@ -294,6 +344,15 @@ async function migrate() {
   await waitForDb(pool);
   console.log('⏳ Executando migration...');
   await pool.query(SQL);
+  if (env.salon.email) {
+    await pool.query(
+      `UPDATE salons
+          SET contact_email = $1
+        WHERE slug = 'ana-ester'
+          AND (contact_email IS NULL OR contact_email = '')`,
+      [env.salon.email],
+    );
+  }
   console.log('✅ Migration concluída.');
   await closePool();
 }

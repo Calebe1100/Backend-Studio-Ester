@@ -20,6 +20,11 @@ import { verifyAccessToken, verifyRefreshToken } from '../../lib/jwt';
 
 const mockQuery = jest.fn();
 const mockPool = { query: mockQuery } as unknown as import('pg').Pool;
+const SALON = 'salon-test-uuid';
+
+function signIn(identifier: string, password: string, pool: import('pg').Pool = mockPool) {
+  return login(identifier, password, SALON, pool);
+}
 
 // Banco de estado em memória para simular persistência
 interface UserRow {
@@ -64,7 +69,9 @@ function setupMockPool() {
       const variants = params[0] as string[];
       const activeOnly = params[1] === true;
       const exclude = (params[2] as string | null) ?? null;
+      const salonId = params[3] as string | undefined;
       const user = inMemoryUsers.find((u) => {
+        if (salonId && u.salon_id !== salonId) return false;
         if (activeOnly && !u.active) return false;
         if (exclude && u.id === exclude) return false;
         return (
@@ -77,10 +84,12 @@ function setupMockPool() {
       return { rows: user ? [{ id: user.id }] : [] };
     }
 
-    // SELECT de usuário por e-mail
-    if (q.startsWith('select * from users where email')) {
-      const email = params[0] as string;
-      const user = inMemoryUsers.find((u) => u.email === email && u.active);
+    if (collapsed.includes('from users') && collapsed.includes('lower(email)')) {
+      const salonId = params[0] as string;
+      const email = String(params[1]).toLowerCase();
+      const user = inMemoryUsers.find(
+        (u) => u.salon_id === salonId && u.email.toLowerCase() === email && u.active,
+      );
       return { rows: user ? [user] : [] };
     }
 
@@ -170,7 +179,7 @@ afterEach(() => {
 
 describe('Persistência do Login — authService.login', () => {
   it('[1] login com credenciais válidas retorna access_token, refresh_token e persiste no banco', async () => {
-    const result = await login('ester@studioester.com.br', 'Senh@Correta123', mockPool);
+    const result = await signIn('ester@studioester.com.br', 'Senh@Correta123', mockPool);
 
     expect(result.accessToken).toBeDefined();
     expect(result.refreshToken).toBeDefined();
@@ -188,7 +197,7 @@ describe('Persistência do Login — authService.login', () => {
 
   it('[2] login com senha errada retorna erro 401 e NÃO persiste token', async () => {
     await expect(
-      login('ester@studioester.com.br', 'SenhaErrada!', mockPool)
+      signIn('ester@studioester.com.br', 'SenhaErrada!', mockPool)
     ).rejects.toMatchObject({ statusCode: 401 });
 
     expect(inMemoryRefreshTokens).toHaveLength(0);
@@ -196,12 +205,12 @@ describe('Persistência do Login — authService.login', () => {
 
   it('[3] login com e-mail inexistente retorna erro 401', async () => {
     await expect(
-      login('naoexiste@teste.com', 'qualquerSenha', mockPool)
+      signIn('naoexiste@teste.com', 'qualquerSenha', mockPool)
     ).rejects.toMatchObject({ statusCode: 401 });
   });
 
   it('[3b] login com telefone da equipe autentica o usuário', async () => {
-    const result = await login('(11) 98888-7777', 'Senh@Correta123', mockPool);
+    const result = await signIn('(11) 98888-7777', 'Senh@Correta123', mockPool);
     expect(result.user.email).toBe('ester@studioester.com.br');
     expect(result.user.id).toBe('user-test-uuid');
   });
@@ -219,31 +228,53 @@ describe('Persistência do Login — authService.login', () => {
     });
     inMemoryClients.push({ user_id: 'client-user', phone: '(21) 97777-1234' });
 
-    const result = await login('21977771234', 'Senh@Correta123', mockPool);
+    const result = await signIn('21977771234', 'Senh@Correta123', mockPool);
     expect(result.user.id).toBe('client-user');
     expect(result.user.role).toBe('cliente');
   });
 
   it('[3d] login com telefone inexistente retorna erro 401', async () => {
     await expect(
-      login('11900000000', 'Senh@Correta123', mockPool)
+      signIn('11900000000', 'Senh@Correta123', mockPool)
     ).rejects.toMatchObject({ statusCode: 401 });
   });
 
   it('[1b] access_token gerado contém payload correto (sub, role, salonId)', async () => {
-    const result = await login('ester@studioester.com.br', 'Senh@Correta123', mockPool);
+    const result = await signIn('ester@studioester.com.br', 'Senh@Correta123', mockPool);
     const payload = verifyAccessToken(result.accessToken);
 
     expect(payload.sub).toBe('user-test-uuid');
     expect(payload.role).toBe('dono');
     expect(payload.salonId).toBe('salon-test-uuid');
   });
+
+  it('não autentica o mesmo e-mail ou telefone de outro salão', async () => {
+    inMemoryUsers.push({
+      id: 'other-user',
+      salon_id: 'other-salon',
+      name: 'Outra',
+      email: 'ester@studioester.com.br',
+      phone: '11988887777',
+      password_hash: inMemoryUsers[0].password_hash,
+      role: 'dono',
+      active: true,
+    });
+
+    const mine = await login('ester@studioester.com.br', 'Senh@Correta123', SALON, mockPool);
+    expect(mine.user.id).toBe('user-test-uuid');
+
+    const other = await login('ester@studioester.com.br', 'Senh@Correta123', 'other-salon', mockPool);
+    expect(other.user.id).toBe('other-user');
+
+    const byPhone = await login('(11) 98888-7777', 'Senh@Correta123', 'other-salon', mockPool);
+    expect(byPhone.user.id).toBe('other-user');
+  });
 });
 
 describe('Persistência do Login — authService.refresh', () => {
   it('[4] refresh com token válido retorna novo access_token e rotaciona refresh_token', async () => {
     // Primeiro faz login para obter token
-    const loginResult = await login('ester@studioester.com.br', 'Senh@Correta123', mockPool);
+    const loginResult = await signIn('ester@studioester.com.br', 'Senh@Correta123', mockPool);
     const oldRefreshToken = loginResult.refreshToken;
 
     const refreshResult = await refresh(oldRefreshToken, mockPool);
@@ -269,7 +300,7 @@ describe('Persistência do Login — authService.refresh', () => {
   });
 
   it('[5] refresh com token revogado retorna erro 401', async () => {
-    const loginResult = await login('ester@studioester.com.br', 'Senh@Correta123', mockPool);
+    const loginResult = await signIn('ester@studioester.com.br', 'Senh@Correta123', mockPool);
     const tokenHash = hashToken(loginResult.refreshToken);
 
     // Revoga manualmente
@@ -297,7 +328,7 @@ describe('Persistência do Login — authService.refresh', () => {
 
 describe('Persistência do Login — authService.logout', () => {
   it('[7] logout revoga o refresh_token no banco', async () => {
-    const loginResult = await login('ester@studioester.com.br', 'Senh@Correta123', mockPool);
+    const loginResult = await signIn('ester@studioester.com.br', 'Senh@Correta123', mockPool);
     const tokenHash = hashToken(loginResult.refreshToken);
 
     // Verifica que token existe e está ativo
@@ -312,7 +343,7 @@ describe('Persistência do Login — authService.logout', () => {
   });
 
   it('[7b] logout é idempotente — chamar duas vezes não lança erro', async () => {
-    const loginResult = await login('ester@studioester.com.br', 'Senh@Correta123', mockPool);
+    const loginResult = await signIn('ester@studioester.com.br', 'Senh@Correta123', mockPool);
 
     await expect(logout(loginResult.refreshToken, mockPool)).resolves.toBeUndefined();
     await expect(logout(loginResult.refreshToken, mockPool)).resolves.toBeUndefined();

@@ -47,13 +47,14 @@ function mapUser(row: UserRow): UserDTO {
 
 async function requireUniquePhone(
   raw: string | null | undefined,
+  salonId: string,
   pool?: Pool,
   excludeUserId?: string,
 ): Promise<string> {
   const phone = normalizeStoredPhone(raw);
   if (!phone) throw new HttpError(400, 'Informe um telefone válido com DDD.');
 
-  const taken = await findUserIdByPhone(db(pool), phone, { excludeUserId });
+  const taken = await findUserIdByPhone(db(pool), phone, { salonId, excludeUserId });
   if (taken) throw new HttpError(409, 'Este telefone já possui cadastro.');
   return phone;
 }
@@ -116,7 +117,7 @@ export async function createUser(
     throw new HttpError(400, 'Papel inválido.');
   }
 
-  const phone = await requireUniquePhone(input.phone, pool);
+  const phone = await requireUniquePhone(input.phone, salonId, pool);
   const passwordHash = await hashPassword(input.password);
   try {
     const result = await db(pool).query<UserRow>(
@@ -149,7 +150,7 @@ export async function updateUser(
     throw new HttpError(400, 'Papel inválido.');
   }
 
-  const phone = await requireUniquePhone(input.phone, pool, id);
+  const phone = await requireUniquePhone(input.phone, salonId, pool, id);
 
   if (input.password) {
     if (input.password.length < 8) {

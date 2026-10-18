@@ -4,7 +4,6 @@
  * configurado, o código é apenas logado (desenvolvimento).
  */
 import crypto from 'crypto';
-import { env } from '../config/env';
 import { maskPhone } from './phone';
 import { isSmsConfigured, sendSms } from './sms';
 import { isWhatsAppConfigured, sendPasswordResetWhatsApp } from './whatsapp';
@@ -35,15 +34,19 @@ export function otpCodeMatches(code: string, storedHash: string): boolean {
   return crypto.timingSafeEqual(candidate, stored);
 }
 
-function smsMessage(code: string): string {
-  return `${env.salon.name}: seu código para redefinir a senha é ${code}. Válido por ${OTP_TTL_MINUTES} minutos.`;
+function smsMessage(code: string, salonName: string): string {
+  return `${salonName}: seu código para redefinir a senha é ${code}. Válido por ${OTP_TTL_MINUTES} minutos.`;
 }
 
 /**
  * Entrega o código no celular. Lança apenas se todos os canais configurados
  * falharem — quem chama decide se o erro é exposto ao usuário.
  */
-export async function sendPasswordResetCode(phone: string, code: string): Promise<void> {
+export async function sendPasswordResetCode(
+  phone: string,
+  code: string,
+  salonName = 'Salão',
+): Promise<void> {
   const masked = maskPhone(phone);
   const failures: string[] = [];
 
@@ -59,7 +62,7 @@ export async function sendPasswordResetCode(phone: string, code: string): Promis
 
   if (isSmsConfigured()) {
     try {
-      await sendSms(phone, smsMessage(code));
+      await sendSms(phone, smsMessage(code, salonName));
       return;
     } catch (err) {
       failures.push(`sms: ${String(err)}`);

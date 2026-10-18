@@ -51,6 +51,10 @@ export const env = {
     user: process.env.SMTP_USER ?? '',
     pass: process.env.SMTP_PASS ?? '',
   },
+  /**
+   * Legado do seed e da caixa de leads da landing.
+   * A marca enviada a clientes e equipe vem da tabela salons.
+   */
   salon: {
     name: process.env.SALON_NAME ?? 'Studio Ana Ester',
     email: process.env.SALON_EMAIL ?? '',
@@ -76,3 +80,8 @@ export const env = {
     from: process.env.TWILIO_FROM ?? '',
   },
 };
+
+/** Lida a cada requisição para o teste poder trocar a chave sem reiniciar o módulo. */
+export function platformApiKey(): string {
+  return process.env.PLATFORM_API_KEY ?? '';
+}

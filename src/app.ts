@@ -3,50 +3,29 @@ import cors from 'cors';
 import authRoutes from './routes/auth';
 import domainRoutes from './routes/domain';
 import publicRoutes from './routes/public';
+import platformRoutes from './routes/platform';
+import { loadTenantOrigins, originAllowed, staticOrigins } from './lib/corsOrigins';
 
 export function createApp() {
   const app = express();
-
-  // FRONTEND_URL pode ser uma URL ou várias separadas por vírgula
-  const allowedOrigins = [
-    ...(process.env.FRONTEND_URL ?? '').split(',').map((s) => s.trim()),
-    'https://app-studio-ester-rodrigues.vercel.app',
-    'https://app-studio-ester.vercel.app',
-    'https://studio-ester.vercel.app',
-    // Landing page comercial (SalonSign)
-    'https://salonsign.vercel.app',
-    'https://landing-salonsign.vercel.app',
-    'https://salonsign.com.br',
-    'https://www.salonsign.com.br',
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:3002',
-    'http://127.0.0.1:3002',
-  ].filter(Boolean) as string[];
-
-  const vercelPrefixes = ['app-studio-ester', 'studio-ester', 'salonsign', 'landing-salonsign'];
-
-  function isAllowedOrigin(origin: string): boolean {
-    if (allowedOrigins.includes(origin)) return true;
-    // Preview deploys da Vercel (ex: app-studio-ester-rodrigues-git-....vercel.app)
-    try {
-      const host = new URL(origin).hostname;
-      return host.endsWith('.vercel.app') && vercelPrefixes.some((p) => host.startsWith(p));
-    } catch {
-      return false;
-    }
-  }
+  const fixedOrigins = staticOrigins();
 
   app.use(
     cors({
       origin: (origin, callback) => {
         // Permite requisições sem origin (ex: Postman, Railway health checks)
         // callback(null, false) em vez de Error — Error vira 500 sem headers CORS
-        if (!origin || isAllowedOrigin(origin)) {
+        if (!origin) {
           callback(null, true);
-        } else {
-          callback(null, false);
+          return;
         }
+        loadTenantOrigins()
+          .then((tenantOrigins) => {
+            callback(null, originAllowed(origin, tenantOrigins, fixedOrigins));
+          })
+          .catch(() => {
+            callback(null, originAllowed(origin, [], fixedOrigins));
+          });
       },
       credentials: true,
     })
@@ -58,7 +37,8 @@ export function createApp() {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
-  // Rotas
+  // Rotas. Plataforma antes do domínio para a chave não passar pelo JWT do salão.
+  app.use('/api/platform', platformRoutes);
   app.use('/api/auth', authRoutes);
   app.use('/api/public', publicRoutes);
   app.use('/api', domainRoutes);
