@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS salons (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS logo BYTEA;
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS logo_type TEXT;
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS logo_updated_at TIMESTAMPTZ;
+
 -- Usuários com credenciais persistidas no banco
 CREATE TABLE IF NOT EXISTS users (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -121,6 +125,10 @@ CREATE TABLE IF NOT EXISTS services (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE services ADD COLUMN IF NOT EXISTS image BYTEA;
+ALTER TABLE services ADD COLUMN IF NOT EXISTS image_type TEXT;
+ALTER TABLE services ADD COLUMN IF NOT EXISTS image_updated_at TIMESTAMPTZ;
 
 -- Vínculo profissional ↔ serviços que realiza
 CREATE TABLE IF NOT EXISTS professional_services (

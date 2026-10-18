@@ -19,6 +19,8 @@ import {
 } from '../services/notificationsService';
 import * as inbox from '../services/notificationsInboxService';
 import * as push from '../services/pushService';
+import * as salons from '../services/salonsService';
+import { parseImagePayload } from '../lib/imagePayload';
 import { env } from '../config/env';
 import { dateInZone, DEFAULT_SALON_TIMEZONE } from '../lib/time';
 
@@ -209,9 +211,35 @@ router.get(
   '/services',
   requireRole('dono', 'recepcao', 'profissional', 'cliente'),
   asyncHandler(async (req, res) => {
-    const list = await services.listServices(salonId(req));
+    const id = salonId(req);
+    const [list, logoUpdatedAt] = await Promise.all([
+      services.listServices(id),
+      salons.getSalonLogoUpdatedAt(id),
+    ]);
     const viewer = viewerOf(req);
-    res.json({ services: list.map((service) => access.presentService(service, viewer)) });
+    res.json({
+      services: list.map((service) => access.presentService(service, viewer)),
+      logoUpdatedAt,
+    });
+  }),
+);
+
+router.put(
+  '/salon/logo',
+  requireRole('dono'),
+  asyncHandler(async (req, res) => {
+    const image = parseImagePayload(req.body?.image);
+    const logoUpdatedAt = await salons.setSalonLogo(salonId(req), image);
+    res.json({ logoUpdatedAt });
+  }),
+);
+
+router.delete(
+  '/salon/logo',
+  requireRole('dono'),
+  asyncHandler(async (req, res) => {
+    await salons.clearSalonLogo(salonId(req));
+    res.json({ logoUpdatedAt: null });
   }),
 );
 

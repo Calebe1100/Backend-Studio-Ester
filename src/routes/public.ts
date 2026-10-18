@@ -8,6 +8,7 @@ import * as clients from '../services/clientsService';
 import * as leads from '../services/leadsService';
 import { notifyStaffNewBooking } from '../services/notificationsService';
 import * as professionals from '../services/professionalsService';
+import * as salons from '../services/salonsService';
 import * as services from '../services/servicesService';
 
 const router = Router();
@@ -71,12 +72,65 @@ router.get(
       professionals.listProfessionals(salonId),
       services.listServices(salonId),
     ]);
+    const logoUpdatedAt = await salons.getSalonLogoUpdatedAt(salonId);
     res.json({
       professionals: professionalList
         .filter((item) => item.active)
         .map(({ userId: _userId, ...item }) => item),
       services: serviceList.filter((item) => item.active),
+      logoUpdatedAt,
     });
+  }),
+);
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const publicImageLimiter = createRateLimiter({ max: 240, windowMs: 60 * 1000 });
+
+function sendStoredImage(
+  res: {
+    status: (code: number) => { json: (body: unknown) => void };
+    setHeader: (name: string, value: string) => void;
+    send: (body: Buffer) => void;
+  },
+  image: { bytes: Buffer; contentType: string } | null,
+) {
+  if (!image) {
+    res.status(404).json({ error: 'Imagem não encontrada.' });
+    return;
+  }
+  res.setHeader('Content-Type', image.contentType);
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.send(image.bytes);
+}
+
+/**
+ * GET /api/public/salons/:slug/logo
+ * A tag img não envia o header do salão, então o slug vai na URL.
+ */
+router.get(
+  '/salons/:slug/logo',
+  asyncHandler(async (req, res) => {
+    assertPublicRateLimit(publicImageLimiter, req);
+    const salon = await salons.requireSalonBySlug(req.params.slug);
+    sendStoredImage(res, await salons.getSalonLogo(salon.id));
+  }),
+);
+
+/**
+ * GET /api/public/salons/:slug/services/:id/image
+ */
+router.get(
+  '/salons/:slug/services/:id/image',
+  asyncHandler(async (req, res) => {
+    assertPublicRateLimit(publicImageLimiter, req);
+    if (!UUID_PATTERN.test(req.params.id)) {
+      res.status(404).json({ error: 'Imagem não encontrada.' });
+      return;
+    }
+    const salon = await salons.requireSalonBySlug(req.params.slug);
+    sendStoredImage(res, await services.getServiceImage(salon.id, req.params.id));
   }),
 );
 

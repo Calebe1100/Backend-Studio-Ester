@@ -162,6 +162,66 @@ export async function requireSalonBySlug(slug: string, pool?: Pool): Promise<Sal
   return salon;
 }
 
+function toIso(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+export async function getSalonLogoUpdatedAt(salonId: string, pool?: Pool): Promise<string | null> {
+  const result = await db(pool).query<{ logo_updated_at: Date | string | null }>(
+    `SELECT logo_updated_at FROM salons WHERE id = $1`,
+    [salonId],
+  );
+  return toIso(result.rows[0]?.logo_updated_at);
+}
+
+export async function getSalonLogo(
+  salonId: string,
+  pool?: Pool,
+): Promise<{ bytes: Buffer; contentType: string } | null> {
+  const result = await db(pool).query<{ logo: Buffer | null; logo_type: string | null }>(
+    `SELECT logo, logo_type FROM salons WHERE id = $1`,
+    [salonId],
+  );
+  const row = result.rows[0];
+  if (!row?.logo || !row.logo_type) return null;
+  if (row.logo_type !== 'image/jpeg' && row.logo_type !== 'image/png' && row.logo_type !== 'image/webp') {
+    return null;
+  }
+  return {
+    bytes: Buffer.isBuffer(row.logo) ? row.logo : Buffer.from(row.logo),
+    contentType: row.logo_type,
+  };
+}
+
+export async function setSalonLogo(
+  salonId: string,
+  image: { bytes: Buffer; contentType: string },
+  pool?: Pool,
+): Promise<string> {
+  const result = await db(pool).query<{ logo_updated_at: Date }>(
+    `UPDATE salons
+     SET logo = $2, logo_type = $3, logo_updated_at = NOW()
+     WHERE id = $1
+     RETURNING logo_updated_at`,
+    [salonId, image.bytes, image.contentType],
+  );
+  if (!result.rows[0]) throw new HttpError(404, 'Salão não encontrado.');
+  return toIso(result.rows[0].logo_updated_at) ?? new Date().toISOString();
+}
+
+export async function clearSalonLogo(salonId: string, pool?: Pool): Promise<void> {
+  const result = await db(pool).query(
+    `UPDATE salons
+     SET logo = NULL, logo_type = NULL, logo_updated_at = NULL
+     WHERE id = $1`,
+    [salonId],
+  );
+  if (result.rowCount === 0) throw new HttpError(404, 'Salão não encontrado.');
+}
+
 function uniqueViolation(err: unknown): string | null {
   if (!err || typeof err !== 'object' || !('code' in err)) return null;
   if ((err as { code: string }).code !== '23505') return null;
