@@ -1,8 +1,10 @@
 /**
  * Seed — provisiona o tenant Studio Ana Ester e o usuário dono inicial.
- * Execute com: npm run seed
+ * No Railway, `npm start` executa o arquivo compilado depois da migration.
+ * Local: npm run seed
  *
- * Seguro para rodar múltiplas vezes (idempotente por slug).
+ * Seguro para rodar múltiplas vezes (idempotente por slug). Não troca a senha
+ * se o dono já existir.
  */
 import bcrypt from 'bcrypt';
 import { getPool, closePool } from './pool';
