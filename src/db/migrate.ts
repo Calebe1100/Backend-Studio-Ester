@@ -145,10 +145,17 @@ CREATE TABLE IF NOT EXISTS clients (
 -- Bancos já existentes: garante colunas
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS email TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'cadastrado';
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_salon_email
+ALTER TABLE clients DROP CONSTRAINT IF EXISTS clients_kind_check;
+ALTER TABLE clients ADD CONSTRAINT clients_kind_check
+  CHECK (kind IN ('cadastrado', 'visitante'));
+
+-- E-mail único só para cliente cadastrado. Visitante pode repetir e-mail de uma conta.
+DROP INDEX IF EXISTS idx_clients_salon_email;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_salon_email_cadastrado
   ON clients (salon_id, lower(email))
-  WHERE email IS NOT NULL AND email <> '';
+  WHERE email IS NOT NULL AND email <> '' AND kind = 'cadastrado';
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_user_id
   ON clients (user_id)
@@ -306,6 +313,27 @@ SET frontend_origins = ARRAY[
 ]::text[]
 WHERE slug = 'ana-ester'
   AND cardinality(frontend_origins) = 0;
+
+-- Banco novo (ambiente de teste) não herda o salão da produção.
+INSERT INTO salons (
+  name, slug, timezone, currency, locale, brand_color, frontend_origins,
+  client_cancel_lead_minutes, active
+)
+SELECT
+  'Studio Ana Ester',
+  'ana-ester',
+  'America/Sao_Paulo',
+  'BRL',
+  'pt-BR',
+  '#7c2d3e',
+  ARRAY[
+    'https://app-studio-ester-rodrigues.vercel.app',
+    'https://app-studio-ester.vercel.app',
+    'https://studio-ester.vercel.app'
+  ]::text[],
+  120,
+  TRUE
+WHERE NOT EXISTS (SELECT 1 FROM salons WHERE slug = 'ana-ester');
 
 -- E-mail único por salão, não no banco inteiro.
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key;

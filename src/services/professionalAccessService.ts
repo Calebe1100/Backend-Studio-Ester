@@ -3,7 +3,7 @@ import { getPool } from '../db/pool';
 import { HttpError } from '../lib/httpError';
 import { pgTimeToHHMM } from '../lib/time';
 import type { AppointmentDTO } from './appointmentsService';
-import type { ClientDTO } from './clientsService';
+import type { ClientDTO, ClientKind, ClientSummary } from './clientsService';
 import { createProfessional, updateProfessional } from './professionalsService';
 import type { ServiceDTO } from './servicesService';
 
@@ -119,18 +119,26 @@ type Viewer = {
 
 export type AppointmentView = Omit<AppointmentDTO, 'servicePriceSnapshot'> & {
   clientName: string;
+  clientKind: ClientKind;
   servicePriceSnapshot: number | null;
 };
+
+function resolveClient(client: string | ClientSummary | undefined): ClientSummary {
+  if (!client) return { name: 'Cliente', kind: 'cadastrado' };
+  if (typeof client === 'string') return { name: client, kind: 'cadastrado' };
+  return client;
+}
 
 /** Omite preço, contato e nome completo conforme a concessão. Dono e recepção não são reduzidos. */
 export function presentAppointment(
   appointment: AppointmentDTO,
-  clientName: string | undefined,
+  client: string | ClientSummary | undefined,
   viewer: Viewer,
 ): AppointmentView {
-  const fullName = clientName?.trim() || 'Cliente';
+  const summary = resolveClient(client);
+  const fullName = summary.name.trim() || 'Cliente';
   if (viewer.role !== 'profissional' || !viewer.permissions) {
-    return { ...appointment, clientName: fullName };
+    return { ...appointment, clientName: fullName, clientKind: summary.kind };
   }
 
   const own = appointment.professionalId === viewer.professionalId;
@@ -138,6 +146,7 @@ export function presentAppointment(
   return {
     ...appointment,
     clientName: showContact ? fullName : firstName(fullName),
+    clientKind: summary.kind,
     notes: own || showContact ? appointment.notes : '',
     servicePriceSnapshot: viewer.permissions.precos ? appointment.servicePriceSnapshot : null,
   };
