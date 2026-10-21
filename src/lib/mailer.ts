@@ -103,6 +103,7 @@ export type NewLeadEmailDetails = {
   email: string | null;
   salonName: string;
   teamSize: string | null;
+  theme: string;
   source: string;
   utm: Record<string, string>;
 };
@@ -135,6 +136,7 @@ export async function sendNewLeadEmail(
     `E-mail: ${details.email ?? '—'}`,
     `Salão: ${details.salonName}`,
     `Equipe: ${details.teamSize ?? '—'}`,
+    `Tema: ${details.theme}`,
     `Origem: ${details.source}${utmText ? ` (${utmText})` : ''}`,
   ];
 
@@ -155,6 +157,7 @@ export async function sendNewLeadEmail(
           ${row('E-mail', details.email ?? '—')}
           ${row('Salão', details.salonName)}
           ${row('Equipe', details.teamSize ?? '—')}
+          ${row('Tema', details.theme)}
           ${row('Origem', `${details.source}${utmText ? ` (${utmText})` : ''}`)}
         </ul>
         <p>

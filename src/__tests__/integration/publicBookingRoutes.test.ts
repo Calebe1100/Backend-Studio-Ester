@@ -65,6 +65,7 @@ const salon = {
   locale: 'pt-BR',
   contactEmail: null,
   brandColor: '#7c2d3e',
+  theme: 'classico' as const,
   frontendOrigins: [] as string[],
   clientCancelLeadMinutes: 120,
   active: true,
@@ -98,6 +99,24 @@ beforeEach(() => {
   });
   publicBookLimiter.reset();
   publicCatalogLimiter.reset();
+});
+
+describe('GET /api/public/branding', () => {
+  it('devolve nome, slug e tema do salão', async () => {
+    const res = await withSalon(request(app).get('/api/public/branding'));
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      name: 'Studio Ana Ester',
+      slug: 'ana-ester',
+      theme: 'classico',
+    });
+  });
+
+  it('exige o slug do salão', async () => {
+    const res = await request(app).get('/api/public/branding');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/salão/i);
+  });
 });
 
 describe('GET /api/public/catalog', () => {

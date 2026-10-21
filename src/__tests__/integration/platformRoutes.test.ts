@@ -34,6 +34,7 @@ const salon = {
   locale: 'pt-BR',
   contactEmail: null,
   brandColor: '#7c2d3e',
+  theme: 'classico' as const,
   frontendOrigins: [],
   clientCancelLeadMinutes: 120,
   active: true,
@@ -48,6 +49,16 @@ describe('POST /api/platform/salons', () => {
     const res = await request(app).post('/api/platform/salons').send({ name: 'Novo' });
     expect(res.status).toBe(401);
     expect(mockProvision).not.toHaveBeenCalled();
+  });
+
+  it('devolve 400 quando o tema do salão é inválido', async () => {
+    mockProvision.mockRejectedValueOnce(new HttpError(400, 'Tema inválido. Use classico, moderno ou basico.'));
+    const res = await request(app)
+      .post('/api/platform/salons')
+      .set('Authorization', 'Bearer platform-test-key')
+      .send({ name: 'Salão B', slug: 'salao-b', theme: 'rosa' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Tema/);
   });
 
   it('responde 503 quando a chave não está configurada', async () => {
@@ -66,6 +77,7 @@ describe('POST /api/platform/salons', () => {
       timezone: 'America/Manaus',
       currency: 'BRL',
       locale: 'pt-BR',
+      theme: 'basico',
       owner: { id: 'owner-2', name: 'Bia', email: 'bia@salao.com', role: 'dono' },
     });
 

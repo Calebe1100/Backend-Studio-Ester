@@ -11,6 +11,40 @@ export const ANA_ESTER_BRAND_COLOR = '#7c2d3e';
 export const NEUTRAL_BRAND_COLOR = '#4b5563';
 export const DEFAULT_CANCEL_LEAD_MINUTES = 120;
 
+export const SALON_THEMES = ['classico', 'moderno', 'basico'] as const;
+export type SalonTheme = (typeof SALON_THEMES)[number];
+export const DEFAULT_SALON_THEME: SalonTheme = 'basico';
+export const ANA_ESTER_THEME: SalonTheme = 'classico';
+
+const SALON_THEME_SET = new Set<string>(SALON_THEMES);
+
+export function normalizeThemeKey(value: unknown): string {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+/** Tema ausente vira básico. Com `required`, a ausência também é 400. */
+export function parseSalonTheme(value: unknown, options?: { required?: boolean }): SalonTheme {
+  const key = normalizeThemeKey(value);
+  if (!key) {
+    if (options?.required) throw new HttpError(400, 'Escolha um tema.');
+    return DEFAULT_SALON_THEME;
+  }
+  if (!SALON_THEME_SET.has(key)) {
+    throw new HttpError(400, 'Tema inválido. Use classico, moderno ou basico.');
+  }
+  return key as SalonTheme;
+}
+
+export function themeLabel(theme: SalonTheme): string {
+  if (theme === 'classico') return 'Clássico';
+  if (theme === 'moderno') return 'Moderno';
+  return 'Básico';
+}
+
 export const ANA_ESTER_ORIGINS = [
   'https://app-studio-ester-rodrigues.vercel.app',
   'https://app-studio-ester.vercel.app',
@@ -30,6 +64,7 @@ export type SalonSettings = {
   locale: string;
   contactEmail: string | null;
   brandColor: string;
+  theme: SalonTheme;
   frontendOrigins: string[];
   clientCancelLeadMinutes: number;
   active: boolean;
@@ -46,13 +81,14 @@ type SalonRow = {
   locale: string;
   contact_email: string | null;
   brand_color: string;
+  theme: string;
   frontend_origins: string[] | null;
   client_cancel_lead_minutes: number;
   active: boolean;
 };
 
 const SALON_SELECT = `id, name, slug, phone, address, timezone, currency, locale,
-  contact_email, brand_color, frontend_origins, client_cancel_lead_minutes, active`;
+  contact_email, brand_color, theme, frontend_origins, client_cancel_lead_minutes, active`;
 
 export type ProvisionSalonInput = {
   name: string;
@@ -64,6 +100,7 @@ export type ProvisionSalonInput = {
   address?: string | null;
   contactEmail?: string | null;
   brandColor?: string;
+  theme?: string;
   frontendOrigins?: string[];
   clientCancelLeadMinutes?: number;
   owner: {
@@ -81,6 +118,7 @@ export type ProvisionedSalon = {
   timezone: string;
   currency: string;
   locale: string;
+  theme: SalonTheme;
   owner: { id: string; name: string; email: string; role: 'dono' };
 };
 
@@ -100,6 +138,7 @@ function mapSalon(row: SalonRow): SalonSettings {
     locale: row.locale || 'pt-BR',
     contactEmail: row.contact_email,
     brandColor: row.brand_color || NEUTRAL_BRAND_COLOR,
+    theme: parseSalonTheme(row.theme),
     frontendOrigins: row.frontend_origins ?? [],
     clientCancelLeadMinutes: row.client_cancel_lead_minutes ?? DEFAULT_CANCEL_LEAD_MINUTES,
     active: row.active,
@@ -249,6 +288,7 @@ export async function provisionSalon(
 
   const brandColor = (input.brandColor ?? NEUTRAL_BRAND_COLOR).trim();
   assertBrandColor(brandColor);
+  const theme = parseSalonTheme(input.theme);
 
   const lead = input.clientCancelLeadMinutes ?? DEFAULT_CANCEL_LEAD_MINUTES;
   if (!Number.isInteger(lead) || lead < 0 || lead > 10080) {
@@ -272,8 +312,8 @@ export async function provisionSalon(
     const salonResult = await client.query<{ id: string }>(
       `INSERT INTO salons (
          name, slug, phone, address, timezone, currency, locale,
-         contact_email, brand_color, frontend_origins, client_cancel_lead_minutes, active
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,TRUE)
+         contact_email, brand_color, theme, frontend_origins, client_cancel_lead_minutes, active
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,TRUE)
        RETURNING id`,
       [
         name,
@@ -285,6 +325,7 @@ export async function provisionSalon(
         locale,
         input.contactEmail?.trim() || null,
         brandColor,
+        theme,
         origins,
         lead,
       ],
@@ -305,6 +346,7 @@ export async function provisionSalon(
       timezone,
       currency,
       locale,
+      theme,
       owner: {
         id: ownerResult.rows[0].id,
         name: ownerName,

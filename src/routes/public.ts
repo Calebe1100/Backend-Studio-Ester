@@ -59,6 +59,20 @@ function isBookingHoneypot(body: { website?: unknown } | null | undefined): bool
 }
 
 /**
+ * GET /api/public/branding
+ * Nome e tema visual do salão. O app usa isso para pintar a interface.
+ */
+router.get(
+  '/branding',
+  asyncHandler(requirePublicSalon),
+  asyncHandler(async (req, res) => {
+    assertPublicRateLimit(publicCatalogLimiter, req);
+    const salon = req.salon!;
+    res.json({ name: salon.name, slug: salon.slug, theme: salon.theme });
+  }),
+);
+
+/**
  * GET /api/public/catalog
  * Profissionais e serviços ativos, sem identificadores de conta.
  */
@@ -222,7 +236,7 @@ router.post(
 
 /**
  * POST /api/public/leads
- * Body: { name, phone, email?, salonName, teamSize?, consent, source?, utm?, website? }
+ * Body: { name, phone, email?, salonName, teamSize?, theme, consent, source?, utm?, website? }
  * Captura lead comercial da landing page SalonSign.
  */
 router.post(
