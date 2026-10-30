@@ -66,6 +66,7 @@ function resolvePool(pool?: Pool): Pool {
 export async function login(
   identifier: string,
   password: string,
+  salonId: string,
   pool?: Pool
 ): Promise<LoginResult> {
   const db = resolvePool(pool);
@@ -74,12 +75,13 @@ export async function login(
   let user: UserRow | undefined;
   if (raw.includes('@')) {
     const result = await db.query<UserRow>(
-      'SELECT * FROM users WHERE email = $1 AND active = TRUE',
-      [raw.toLowerCase()]
+      `SELECT * FROM users
+        WHERE salon_id = $1 AND lower(email) = $2 AND active = TRUE`,
+      [salonId, raw.toLowerCase()]
     );
     user = result.rows[0];
   } else {
-    const userId = await findUserIdByPhone(db, raw, { activeOnly: true });
+    const userId = await findUserIdByPhone(db, raw, { salonId, activeOnly: true });
     if (userId) {
       const result = await db.query<UserRow>(
         'SELECT * FROM users WHERE id = $1 AND active = TRUE',
@@ -203,8 +205,8 @@ export async function logout(refreshToken: string, pool?: Pool): Promise<void> {
 }
 
 /** Localiza o usuário ativo pelo celular (equipe em users.phone, cliente em clients.phone). */
-async function findActiveUserIdByPhone(db: Pool, phone: string): Promise<string | null> {
-  return findUserIdByPhone(db, phone, { activeOnly: true });
+async function findActiveUserIdByPhone(db: Pool, phone: string, salonId: string): Promise<string | null> {
+  return findUserIdByPhone(db, phone, { salonId, activeOnly: true });
 }
 
 async function invalidateResetCode(db: Pool, id: string): Promise<void> {
@@ -218,13 +220,14 @@ async function invalidateResetCode(db: Pool, id: string): Promise<void> {
  */
 export async function createPasswordResetCode(
   phone: string,
+  salonId: string,
   pool?: Pool
 ): Promise<{ code: string; userId: string } | null> {
   const db = resolvePool(pool);
 
   if (!isValidBrPhone(phone)) return null;
 
-  const userId = await findActiveUserIdByPhone(db, phone);
+  const userId = await findActiveUserIdByPhone(db, phone, salonId);
   if (!userId) return null;
 
   const recent = await db.query<{ count: number }>(
@@ -262,6 +265,7 @@ export async function createPasswordResetCode(
 export async function verifyPasswordResetCode(
   phone: string,
   code: string,
+  salonId: string,
   pool?: Pool
 ): Promise<{ resetToken: string; expiresIn: number }> {
   const db = resolvePool(pool);
@@ -271,7 +275,7 @@ export async function verifyPasswordResetCode(
   const digits = (code ?? '').replace(/\D/g, '');
   if (digits.length !== OTP_LENGTH) throw invalidCode();
 
-  const userId = await findActiveUserIdByPhone(db, phone);
+  const userId = await findActiveUserIdByPhone(db, phone, salonId);
   if (!userId) throw invalidCode();
 
   const result = await db.query<PasswordResetCodeRow>(

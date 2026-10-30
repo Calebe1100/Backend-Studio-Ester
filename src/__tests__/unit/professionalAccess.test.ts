@@ -84,7 +84,18 @@ describe('acesso de profissional', () => {
       permissions: null,
     });
     expect(view.clientName).toBe('Maria Souza');
+    expect(view.clientKind).toBe('cadastrado');
     expect(view.servicePriceSnapshot).toBe(120);
+  });
+
+  it('preserva o tipo visitante no agendamento apresentado', () => {
+    const view = presentAppointment(
+      appointment,
+      { name: 'Ana Visitante', kind: 'visitante' },
+      { role: 'dono', professionalId: null, permissions: null },
+    );
+    expect(view.clientKind).toBe('visitante');
+    expect(view.clientName).toBe('Ana Visitante');
   });
 
   it('tira o preço do serviço e o e-mail do cliente', () => {
@@ -94,6 +105,7 @@ describe('acesso de profissional', () => {
       durationMinutes: 60,
       price: 120,
       active: true,
+      imageUpdatedAt: null,
     };
     expect(
       presentService(service, {
@@ -118,6 +130,7 @@ describe('acesso de profissional', () => {
       notes: 'Alergia',
       active: true,
       userId: 'user-1',
+      kind: 'cadastrado',
     };
     const visible = presentClient(client);
     expect(visible.email).toBe('');

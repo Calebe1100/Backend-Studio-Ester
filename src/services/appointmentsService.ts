@@ -3,12 +3,15 @@ import { getPool } from '../db/pool';
 import { HttpError } from '../lib/httpError';
 import {
   addMinutesHHMM,
-  dateInSP,
-  spLocalToDate,
-  timeInSP,
+  civilDateSql,
+  dateInZone,
+  DEFAULT_SALON_TIMEZONE,
+  timeInZone,
   toMinutes,
   weekdayFromISO,
+  zonedLocalToDate,
 } from '../lib/time';
+import { getSalonById } from './salonsService';
 import { getActiveProfessional } from './professionalsService';
 import { getActiveService } from './servicesService';
 
@@ -20,6 +23,21 @@ export const APPOINTMENT_STATUSES = [
   'cancelado',
   'nao_compareceu',
 ] as const;
+
+const OCCUPYING_STATUSES: AppointmentStatus[] = [
+  'agendado',
+  'confirmado',
+  'em_atendimento',
+  'concluido',
+];
+
+export type BusySlotDTO = {
+  professionalId: string;
+  date: string;
+  start: string;
+  end: string;
+  status: AppointmentStatus;
+};
 
 export type AppointmentStatus = (typeof APPOINTMENT_STATUSES)[number];
 
@@ -54,15 +72,15 @@ function db(pool?: Pool) {
   return pool ?? getPool();
 }
 
-function mapAppointment(row: AppointmentRow): AppointmentDTO {
+function mapAppointment(row: AppointmentRow, timeZone: string): AppointmentDTO {
   return {
     id: row.id,
     clientId: row.client_id,
     professionalId: row.professional_id,
     serviceId: row.service_id,
-    date: dateInSP(row.starts_at),
-    start: timeInSP(row.starts_at),
-    end: timeInSP(row.ends_at),
+    date: dateInZone(row.starts_at, timeZone),
+    start: timeInZone(row.starts_at, timeZone),
+    end: timeInZone(row.ends_at, timeZone),
     status: row.status,
     notes: row.notes ?? '',
     servicePriceSnapshot: Number(row.service_price_snapshot),
@@ -93,8 +111,17 @@ async function assertNoOverlap(
   }
 }
 
-function assertWorksOnDate(workDays: number[], date: string): void {
-  if (!workDays.includes(weekdayFromISO(date))) {
+async function salonClock(salonId: string, pool?: Pool): Promise<{ timeZone: string; cancelLeadMs: number }> {
+  const salon = await getSalonById(salonId, pool);
+  const minutes = salon?.clientCancelLeadMinutes ?? 120;
+  return {
+    timeZone: salon?.timezone || DEFAULT_SALON_TIMEZONE,
+    cancelLeadMs: minutes * 60 * 1000,
+  };
+}
+
+function assertWorksOnDate(workDays: number[], date: string, timeZone: string): void {
+  if (!workDays.includes(weekdayFromISO(date, timeZone))) {
     throw new HttpError(400, 'O profissional não atende neste dia da semana.');
   }
 }
@@ -146,18 +173,29 @@ const CLIENT_NEXT_STATUSES: Record<AppointmentStatus, AppointmentStatus[]> = {
 /** Cancelamento do cliente vale até 2 horas antes do início. */
 export const CLIENT_CANCEL_LEAD_MS = 2 * 60 * 60 * 1000;
 
+function cancelLeadMessage(leadMs: number): string {
+  const minutes = Math.round(leadMs / 60000);
+  if (minutes === 120) return 'O cancelamento só é permitido até 2 horas antes do horário.';
+  if (minutes > 0 && minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return `O cancelamento só é permitido até ${hours} ${hours === 1 ? 'hora' : 'horas'} antes do horário.`;
+  }
+  return `O cancelamento só é permitido até ${minutes} minutos antes do horário.`;
+}
+
 export function assertClientStatusChange(
   from: AppointmentStatus,
   to: AppointmentStatus,
   startsAt: Date,
   now: Date = new Date(),
+  leadMs: number = CLIENT_CANCEL_LEAD_MS,
 ): void {
   if (from === to) return;
   if (!CLIENT_NEXT_STATUSES[from].includes(to)) {
     throw new HttpError(400, 'Você só pode confirmar ou cancelar o próprio agendamento.');
   }
-  if (to === 'cancelado' && startsAt.getTime() - now.getTime() < CLIENT_CANCEL_LEAD_MS) {
-    throw new HttpError(400, 'O cancelamento só é permitido até 2 horas antes do horário.');
+  if (to === 'cancelado' && startsAt.getTime() - now.getTime() < leadMs) {
+    throw new HttpError(400, cancelLeadMessage(leadMs));
   }
 }
 
@@ -172,26 +210,22 @@ export async function listAppointments(
   } = {},
   pool?: Pool,
 ): Promise<AppointmentDTO[]> {
+  const { timeZone } = await salonClock(salonId, pool);
+  const dayExpr = civilDateSql('starts_at', '$1');
   const clauses = ['salon_id = $1'];
   const params: unknown[] = [salonId];
 
   if (opts.date) {
     params.push(opts.date);
-    clauses.push(
-      `DATE(starts_at AT TIME ZONE 'America/Sao_Paulo') = $${params.length}::date`,
-    );
+    clauses.push(`${dayExpr} = $${params.length}::date`);
   }
   if (opts.from) {
     params.push(opts.from);
-    clauses.push(
-      `DATE(starts_at AT TIME ZONE 'America/Sao_Paulo') >= $${params.length}::date`,
-    );
+    clauses.push(`${dayExpr} >= $${params.length}::date`);
   }
   if (opts.to) {
     params.push(opts.to);
-    clauses.push(
-      `DATE(starts_at AT TIME ZONE 'America/Sao_Paulo') <= $${params.length}::date`,
-    );
+    clauses.push(`${dayExpr} <= $${params.length}::date`);
   }
   if (opts.professionalId) {
     params.push(opts.professionalId);
@@ -210,7 +244,34 @@ export async function listAppointments(
      ORDER BY starts_at ASC`,
     params,
   );
-  return result.rows.map(mapAppointment);
+  return result.rows.map((row) => mapAppointment(row, timeZone));
+}
+
+/** Ocupação para o wizard público: sem cliente, serviço ou observações. */
+export async function listBusySlots(
+  salonId: string,
+  opts: { professionalId?: string; from: string; to: string },
+  pool?: Pool,
+): Promise<BusySlotDTO[]> {
+  if (!opts.from || !opts.to) throw new HttpError(400, 'Informe o período da agenda.');
+  const list = await listAppointments(
+    salonId,
+    {
+      from: opts.from,
+      to: opts.to,
+      professionalId: opts.professionalId,
+    },
+    pool,
+  );
+  return list
+    .filter((item) => OCCUPYING_STATUSES.includes(item.status))
+    .map((item) => ({
+      professionalId: item.professionalId,
+      date: item.date,
+      start: item.start,
+      end: item.end,
+      status: item.status,
+    }));
 }
 
 export async function getAppointment(
@@ -218,6 +279,7 @@ export async function getAppointment(
   id: string,
   pool?: Pool,
 ): Promise<AppointmentDTO | null> {
+  const { timeZone } = await salonClock(salonId, pool);
   const result = await db(pool).query<AppointmentRow>(
     `SELECT id, client_id, professional_id, service_id, starts_at, ends_at,
             status, notes, service_price_snapshot, service_duration_snapshot
@@ -225,7 +287,7 @@ export async function getAppointment(
      WHERE id = $1 AND salon_id = $2`,
     [id, salonId],
   );
-  return result.rows[0] ? mapAppointment(result.rows[0]) : null;
+  return result.rows[0] ? mapAppointment(result.rows[0], timeZone) : null;
 }
 
 export async function createAppointment(
@@ -243,6 +305,7 @@ export async function createAppointment(
 ): Promise<AppointmentDTO> {
   if (!input.clientId) throw new HttpError(400, 'Selecione um cliente.');
   if (!input.date || !input.start) throw new HttpError(400, 'Informe data e horário.');
+  const { timeZone } = await salonClock(salonId, pool);
 
   const client = await db(pool).query(
     `SELECT id FROM clients WHERE id = $1 AND salon_id = $2 AND active = TRUE`,
@@ -258,11 +321,11 @@ export async function createAppointment(
   }
 
   const end = addMinutesHHMM(input.start, service.durationMinutes);
-  assertWorksOnDate(professional.workDays, input.date);
+  assertWorksOnDate(professional.workDays, input.date, timeZone);
   assertWithinWorkHours(professional.workStart, professional.workEnd, input.start, end);
 
-  const startsAt = spLocalToDate(input.date, input.start);
-  const endsAt = spLocalToDate(input.date, end);
+  const startsAt = zonedLocalToDate(input.date, input.start, timeZone);
+  const endsAt = zonedLocalToDate(input.date, end, timeZone);
   assertNotInPast(startsAt);
   await assertNoOverlap(professional.id, startsAt, endsAt, undefined, pool, opts?.conflictMessage);
 
@@ -286,7 +349,7 @@ export async function createAppointment(
       input.notes?.trim() || null,
     ],
   );
-  return mapAppointment(result.rows[0]);
+  return mapAppointment(result.rows[0], timeZone);
 }
 
 export async function updateAppointment(
@@ -303,6 +366,7 @@ export async function updateAppointment(
   pool?: Pool,
   opts?: { conflictMessage?: string },
 ): Promise<AppointmentDTO> {
+  const { timeZone } = await salonClock(salonId, pool);
   const existing = await db(pool).query<AppointmentRow>(
     `SELECT id, client_id, professional_id, service_id, starts_at, ends_at,
             status, notes, service_price_snapshot, service_duration_snapshot
@@ -327,14 +391,14 @@ export async function updateAppointment(
   const end = addMinutesHHMM(input.start, service.durationMinutes);
   assertWithinWorkHours(professional.workStart, professional.workEnd, input.start, end);
 
-  const startsAt = spLocalToDate(input.date, input.start);
-  const endsAt = spLocalToDate(input.date, end);
+  const startsAt = zonedLocalToDate(input.date, input.start, timeZone);
+  const endsAt = zonedLocalToDate(input.date, end, timeZone);
 
-  const existingMapped = mapAppointment(existing.rows[0]);
+  const existingMapped = mapAppointment(existing.rows[0], timeZone);
   const keepingDay =
     existingMapped.date === input.date && existing.rows[0].professional_id === input.professionalId;
   if (!keepingDay) {
-    assertWorksOnDate(professional.workDays, input.date);
+    assertWorksOnDate(professional.workDays, input.date, timeZone);
   }
   const scheduleChanged =
     existingMapped.date !== input.date || existingMapped.start !== input.start;
@@ -380,7 +444,7 @@ export async function updateAppointment(
       input.notes?.trim() || null,
     ],
   );
-  return mapAppointment(result.rows[0]);
+  return mapAppointment(result.rows[0], timeZone);
 }
 
 export async function setAppointmentStatus(
@@ -394,6 +458,7 @@ export async function setAppointmentStatus(
     throw new HttpError(400, 'Status inválido.');
   }
   const next = status as AppointmentStatus;
+  const clock = await salonClock(salonId, pool);
 
   const existing = await db(pool).query<AppointmentRow>(
     `SELECT id, client_id, professional_id, service_id, starts_at, ends_at,
@@ -407,7 +472,13 @@ export async function setAppointmentStatus(
   }
 
   if (clientId) {
-    assertClientStatusChange(existing.rows[0].status, next, existing.rows[0].starts_at);
+    assertClientStatusChange(
+      existing.rows[0].status,
+      next,
+      existing.rows[0].starts_at,
+      new Date(),
+      clock.cancelLeadMs,
+    );
   } else {
     assertValidTransition(existing.rows[0].status, next);
   }
@@ -419,5 +490,5 @@ export async function setAppointmentStatus(
                status, notes, service_price_snapshot, service_duration_snapshot`,
     [id, salonId, next],
   );
-  return mapAppointment(result.rows[0]);
+  return mapAppointment(result.rows[0], clock.timeZone);
 }

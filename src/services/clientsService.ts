@@ -5,6 +5,9 @@ import { hashPassword } from '../lib/crypto';
 import { normalizeStoredPhone, phoneLookupVariants } from '../lib/phone';
 import { findUserIdByPhone, phoneDigitsSql } from '../lib/phoneAccount';
 
+export const CLIENT_KINDS = ['cadastrado', 'visitante'] as const;
+export type ClientKind = (typeof CLIENT_KINDS)[number];
+
 export type ClientDTO = {
   id: string;
   name: string;
@@ -13,6 +16,7 @@ export type ClientDTO = {
   notes: string;
   active: boolean;
   userId: string | null;
+  kind: ClientKind;
 };
 
 type ClientRow = {
@@ -23,6 +27,7 @@ type ClientRow = {
   notes: string | null;
   active: boolean;
   user_id: string | null;
+  kind: ClientKind | null;
 };
 
 function mapClient(row: ClientRow): ClientDTO {
@@ -34,6 +39,7 @@ function mapClient(row: ClientRow): ClientDTO {
     notes: row.notes ?? '',
     active: row.active,
     userId: row.user_id,
+    kind: row.kind === 'visitante' ? 'visitante' : 'cadastrado',
   };
 }
 
@@ -58,13 +64,14 @@ function assertEmail(email: string | null, required: boolean) {
 
 async function requireUniquePhone(
   raw: string | null | undefined,
+  salonId: string,
   pool?: Pool,
   excludeUserId?: string,
 ): Promise<string> {
   const phone = normalizeStoredPhone(raw);
   if (!phone) throw new HttpError(400, 'Informe um telefone válido com DDD.');
 
-  const taken = await findUserIdByPhone(db(pool), phone, { excludeUserId });
+  const taken = await findUserIdByPhone(db(pool), phone, { salonId, excludeUserId });
   if (taken) throw new HttpError(409, 'Este telefone já possui cadastro. Faça login.');
   return phone;
 }
@@ -78,7 +85,7 @@ function optionalPhone(raw?: string | null): string | null {
   return phone;
 }
 
-const CLIENT_SELECT = `id, name, phone, email, notes, active, user_id`;
+const CLIENT_SELECT = `id, name, phone, email, notes, active, user_id, kind`;
 
 export const CLIENT_TEMPORARY_PASSWORD = 'Cliente@123';
 
@@ -98,20 +105,49 @@ export async function listClients(salonId: string, pool?: Pool): Promise<ClientD
   return result.rows.map(mapClient);
 }
 
+export type ClientSummary = { name: string; kind: ClientKind };
+
 export async function listClientNames(
   salonId: string,
   ids: string[],
   pool?: Pool,
-): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
+): Promise<Map<string, ClientSummary>> {
+  const map = new Map<string, ClientSummary>();
   if (ids.length === 0) return map;
-  const result = await db(pool).query<{ id: string; name: string }>(
-    `SELECT id, name FROM clients
+  const result = await db(pool).query<{ id: string; name: string; kind: ClientKind | null }>(
+    `SELECT id, name, kind FROM clients
      WHERE salon_id = $1 AND id = ANY($2::uuid[])`,
     [salonId, ids],
   );
-  for (const row of result.rows) map.set(row.id, row.name);
+  for (const row of result.rows) {
+    map.set(row.id, {
+      name: row.name,
+      kind: row.kind === 'visitante' ? 'visitante' : 'cadastrado',
+    });
+  }
   return map;
+}
+
+/** Agendamento público: sempre cria cliente visitante, sem conta e sem fundir por e-mail/telefone. */
+export async function createVisitorClient(
+  salonId: string,
+  input: { name: string; phone: string; email: string; notes?: string },
+  pool?: Pool,
+): Promise<ClientDTO> {
+  const name = input.name?.trim() ?? '';
+  if (name.length < 2) throw new HttpError(400, 'Informe o nome completo.');
+  const email = normalizeEmail(input.email);
+  assertEmail(email, true);
+  const phone = optionalPhone(input.phone);
+  if (!phone) throw new HttpError(400, 'Informe um telefone válido com DDD.');
+
+  const result = await db(pool).query<ClientRow>(
+    `INSERT INTO clients (salon_id, name, phone, email, notes, user_id, kind)
+     VALUES ($1, $2, $3, $4, $5, NULL, 'visitante')
+     RETURNING ${CLIENT_SELECT}`,
+    [salonId, name, phone, email, input.notes?.trim() || null],
+  );
+  return mapClient(result.rows[0]);
 }
 
 export async function createClient(
@@ -126,10 +162,10 @@ export async function createClient(
 
   // Com e-mail: cria acesso (user role=cliente) + cliente com senha temporária
   if (email && !input.userId) {
-    const phone = await requireUniquePhone(input.phone, pool);
+    const phone = await requireUniquePhone(input.phone, salonId, pool);
     const existingUser = await db(pool).query(
-      'SELECT id FROM users WHERE lower(email) = $1 LIMIT 1',
-      [email],
+      'SELECT id FROM users WHERE salon_id = $1 AND lower(email) = $2 LIMIT 1',
+      [salonId, email],
     );
     if (existingUser.rows[0]) {
       throw new HttpError(409, 'Este e-mail já possui cadastro. Peça ao cliente para fazer login.');
@@ -209,7 +245,7 @@ export async function updateClient(
   if (!current.rows[0]) throw new HttpError(404, 'Cliente não encontrado.');
 
   const phone = current.rows[0].user_id
-    ? await requireUniquePhone(input.phone, pool, current.rows[0].user_id)
+    ? await requireUniquePhone(input.phone, salonId, pool, current.rows[0].user_id)
     : optionalPhone(input.phone);
 
   try {
@@ -275,26 +311,21 @@ export async function getClientByUserId(
  */
 export async function registerClientAccess(
   input: { name: string; phone?: string; email: string; password: string },
+  salonId: string,
   pool?: Pool,
 ): Promise<{ client: ClientDTO; userId: string }> {
   const name = input.name?.trim() ?? '';
   if (name.length < 2) throw new HttpError(400, 'Informe seu nome completo.');
   const email = normalizeEmail(input.email);
   assertEmail(email, true);
-  const phone = await requireUniquePhone(input.phone, pool);
+  const phone = await requireUniquePhone(input.phone, salonId, pool);
   if (!input.password || input.password.length < 8) {
     throw new HttpError(400, 'A senha deve ter pelo menos 8 caracteres.');
   }
 
-  const salon = await db(pool).query<{ id: string }>(
-    'SELECT id FROM salons ORDER BY created_at ASC LIMIT 1',
-  );
-  if (!salon.rows[0]) throw new HttpError(503, 'Salão ainda não configurado.');
-  const salonId = salon.rows[0].id;
-
   const existingUser = await db(pool).query(
-    'SELECT id FROM users WHERE lower(email) = $1 LIMIT 1',
-    [email],
+    'SELECT id FROM users WHERE salon_id = $1 AND lower(email) = $2 LIMIT 1',
+    [salonId, email],
   );
   if (existingUser.rows[0]) {
     throw new HttpError(409, 'Este e-mail já possui cadastro. Faça login.');
@@ -338,7 +369,7 @@ export async function updateClientProfile(
 ): Promise<ClientDTO> {
   const name = input.name?.trim() ?? '';
   if (name.length < 2) throw new HttpError(400, 'Informe seu nome completo.');
-  const phone = await requireUniquePhone(input.phone, pool, userId);
+  const phone = await requireUniquePhone(input.phone, salonId, pool, userId);
 
   const existing = await getClientByUserId(salonId, userId, pool);
   if (!existing) throw new HttpError(404, 'Perfil de cliente não encontrado.');

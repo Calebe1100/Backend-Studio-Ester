@@ -6,6 +6,13 @@ import request from 'supertest';
 import { createApp } from '../../app';
 
 // Mock do authService para isolar os testes das rotas
+jest.mock('../../services/salonsService', () => ({
+  requireSalonBySlug: jest.fn(),
+  getSalonById: jest.fn(),
+  provisionSalon: jest.fn(),
+  normalizeSlug: (value: string) => String(value).trim().toLowerCase(),
+}));
+
 jest.mock('../../services/authService', () => ({
   login: jest.fn(),
   refresh: jest.fn(),
@@ -22,6 +29,7 @@ jest.mock('../../lib/otp', () => ({
 }));
 
 import * as authService from '../../services/authService';
+import { requireSalonBySlug } from '../../services/salonsService';
 import { sendPasswordResetCode } from '../../lib/otp';
 const mockLogin = authService.login as jest.MockedFunction<typeof authService.login>;
 const mockRefresh = authService.refresh as jest.MockedFunction<typeof authService.refresh>;
@@ -34,7 +42,34 @@ const mockVerifyCode = authService.verifyPasswordResetCode as jest.MockedFunctio
 >;
 const mockSendCode = sendPasswordResetCode as jest.MockedFunction<typeof sendPasswordResetCode>;
 
+const mockRequireSalon = requireSalonBySlug as jest.MockedFunction<typeof requireSalonBySlug>;
+
+const SALON = {
+  id: 'salon-1',
+  name: 'Studio Ana Ester',
+  slug: 'ana-ester',
+  phone: null,
+  address: null,
+  timezone: 'America/Sao_Paulo',
+  currency: 'BRL',
+  locale: 'pt-BR',
+  contactEmail: null,
+  brandColor: '#7c2d3e',
+  theme: 'classico' as const,
+  frontendOrigins: [] as string[],
+  clientCancelLeadMinutes: 120,
+  active: true,
+};
+
 const app = createApp();
+
+function withSalon(req: request.Test): request.Test {
+  return req.set('X-Salon-Slug', 'ana-ester');
+}
+
+beforeEach(() => {
+  mockRequireSalon.mockResolvedValue(SALON);
+});
 
 const MOCK_LOGIN_RESULT = {
   accessToken: 'mock.access.token',
@@ -49,6 +84,7 @@ describe('POST /api/auth/login', () => {
 
     const res = await request(app)
       .post('/api/auth/login')
+      .set('X-Salon-Slug', 'ana-ester')
       .send({ email: 'ester@studioester.com.br', password: 'Senh@Correta123' });
 
     expect(res.status).toBe(200);
@@ -65,6 +101,7 @@ describe('POST /api/auth/login', () => {
 
     const res = await request(app)
       .post('/api/auth/login')
+      .set('X-Salon-Slug', 'ana-ester')
       .send({ email: 'ester@studioester.com.br', password: 'errada' });
 
     expect(res.status).toBe(401);
@@ -74,6 +111,7 @@ describe('POST /api/auth/login', () => {
   it('retorna 400 quando email está ausente', async () => {
     const res = await request(app)
       .post('/api/auth/login')
+      .set('X-Salon-Slug', 'ana-ester')
       .send({ password: 'alguma_senha' });
 
     expect(res.status).toBe(400);
@@ -84,10 +122,11 @@ describe('POST /api/auth/login', () => {
 
     const res = await request(app)
       .post('/api/auth/login')
+      .set('X-Salon-Slug', 'ana-ester')
       .send({ phone: '(11) 98888-7777', password: 'Senh@Correta123' });
 
     expect(res.status).toBe(200);
-    expect(mockLogin).toHaveBeenCalledWith('(11) 98888-7777', 'Senh@Correta123');
+    expect(mockLogin).toHaveBeenCalledWith('(11) 98888-7777', 'Senh@Correta123', 'salon-1');
   });
 
   it('aceita identifier com e-mail', async () => {
@@ -95,10 +134,11 @@ describe('POST /api/auth/login', () => {
 
     const res = await request(app)
       .post('/api/auth/login')
+      .set('X-Salon-Slug', 'ana-ester')
       .send({ identifier: 'ester@studioester.com.br', password: 'Senh@Correta123' });
 
     expect(res.status).toBe(200);
-    expect(mockLogin).toHaveBeenCalledWith('ester@studioester.com.br', 'Senh@Correta123');
+    expect(mockLogin).toHaveBeenCalledWith('ester@studioester.com.br', 'Senh@Correta123', 'salon-1');
   });
 
   it('retorna 400 para telefone inválido', async () => {
@@ -106,6 +146,7 @@ describe('POST /api/auth/login', () => {
 
     const res = await request(app)
       .post('/api/auth/login')
+      .set('X-Salon-Slug', 'ana-ester')
       .send({ identifier: '12345', password: 'senha1234' });
 
     expect(res.status).toBe(400);
@@ -116,9 +157,20 @@ describe('POST /api/auth/login', () => {
   it('retorna 400 quando password está ausente', async () => {
     const res = await request(app)
       .post('/api/auth/login')
+      .set('X-Salon-Slug', 'ana-ester')
       .send({ email: 'test@example.com' });
 
     expect(res.status).toBe(400);
+  });
+
+  it('retorna 400 sem o slug do salão', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'ester@studioester.com.br', password: 'Senh@Correta123' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Informe o salão.');
+    expect(mockLogin).not.toHaveBeenCalled();
   });
 
   it('retorna 400 para body vazio', async () => {
@@ -200,10 +252,11 @@ describe('POST /api/auth/forgot-password', () => {
 
     const res = await request(app)
       .post('/api/auth/forgot-password')
+      .set('X-Salon-Slug', 'ana-ester')
       .send({ phone: '(11) 98888-7777' });
 
     expect(res.status).toBe(200);
-    expect(mockSendCode).toHaveBeenCalledWith('(11) 98888-7777', '123456');
+    expect(mockSendCode).toHaveBeenCalledWith('(11) 98888-7777', '123456', 'Studio Ana Ester');
   });
 
   it('responde igual quando o celular não existe (sem enviar nada)', async () => {
@@ -211,6 +264,7 @@ describe('POST /api/auth/forgot-password', () => {
 
     const res = await request(app)
       .post('/api/auth/forgot-password')
+      .set('X-Salon-Slug', 'ana-ester')
       .send({ phone: '11900000000' });
 
     expect(res.status).toBe(200);
@@ -224,6 +278,7 @@ describe('POST /api/auth/forgot-password', () => {
 
     const res = await request(app)
       .post('/api/auth/forgot-password')
+      .set('X-Salon-Slug', 'ana-ester')
       .send({ phone: '11988887777' });
 
     expect(res.status).toBe(200);
@@ -245,6 +300,7 @@ describe('POST /api/auth/verify-reset-code', () => {
 
     const res = await request(app)
       .post('/api/auth/verify-reset-code')
+      .set('X-Salon-Slug', 'ana-ester')
       .send({ phone: '11988887777', code: '123456' });
 
     expect(res.status).toBe(200);
@@ -258,6 +314,7 @@ describe('POST /api/auth/verify-reset-code', () => {
 
     const res = await request(app)
       .post('/api/auth/verify-reset-code')
+      .set('X-Salon-Slug', 'ana-ester')
       .send({ phone: '11988887777', code: '000000' });
 
     expect(res.status).toBe(400);
@@ -270,6 +327,7 @@ describe('POST /api/auth/verify-reset-code', () => {
 
     const res = await request(app)
       .post('/api/auth/verify-reset-code')
+      .set('X-Salon-Slug', 'ana-ester')
       .send({ phone: '11988887777', code: '000000' });
 
     expect(res.status).toBe(429);
@@ -278,6 +336,7 @@ describe('POST /api/auth/verify-reset-code', () => {
   it('retorna 400 quando falta o código', async () => {
     const res = await request(app)
       .post('/api/auth/verify-reset-code')
+      .set('X-Salon-Slug', 'ana-ester')
       .send({ phone: '11988887777' });
 
     expect(res.status).toBe(400);

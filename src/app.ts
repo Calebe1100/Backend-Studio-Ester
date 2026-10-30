@@ -3,62 +3,56 @@ import cors from 'cors';
 import authRoutes from './routes/auth';
 import domainRoutes from './routes/domain';
 import publicRoutes from './routes/public';
+import platformRoutes from './routes/platform';
+import { loadTenantOrigins, originAllowed, staticOrigins } from './lib/corsOrigins';
+
+const TENANT_ORIGIN_WAIT_MS = 2_000;
+
+/** O preflight não pode esperar um banco lento: o app desiste da chamada em 12s. */
+function loadTenantOriginsBounded(): Promise<string[]> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve([]), TENANT_ORIGIN_WAIT_MS);
+    loadTenantOrigins()
+      .then((origins) => {
+        clearTimeout(timer);
+        resolve(origins);
+      })
+      .catch(() => {
+        clearTimeout(timer);
+        resolve([]);
+      });
+  });
+}
 
 export function createApp() {
   const app = express();
-
-  // FRONTEND_URL pode ser uma URL ou várias separadas por vírgula
-  const allowedOrigins = [
-    ...(process.env.FRONTEND_URL ?? '').split(',').map((s) => s.trim()),
-    'https://app-studio-ester-rodrigues.vercel.app',
-    'https://app-studio-ester.vercel.app',
-    'https://studio-ester.vercel.app',
-    // Landing page comercial (SalonSign)
-    'https://salonsign.vercel.app',
-    'https://landing-salonsign.vercel.app',
-    'https://salonsign.com.br',
-    'https://www.salonsign.com.br',
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:3002',
-    'http://127.0.0.1:3002',
-  ].filter(Boolean) as string[];
-
-  const vercelPrefixes = ['app-studio-ester', 'studio-ester', 'salonsign', 'landing-salonsign'];
-
-  function isAllowedOrigin(origin: string): boolean {
-    if (allowedOrigins.includes(origin)) return true;
-    // Preview deploys da Vercel (ex: app-studio-ester-rodrigues-git-....vercel.app)
-    try {
-      const host = new URL(origin).hostname;
-      return host.endsWith('.vercel.app') && vercelPrefixes.some((p) => host.startsWith(p));
-    } catch {
-      return false;
-    }
-  }
+  const fixedOrigins = staticOrigins();
 
   app.use(
     cors({
       origin: (origin, callback) => {
         // Permite requisições sem origin (ex: Postman, Railway health checks)
         // callback(null, false) em vez de Error — Error vira 500 sem headers CORS
-        if (!origin || isAllowedOrigin(origin)) {
+        if (!origin || originAllowed(origin, [], fixedOrigins)) {
           callback(null, true);
-        } else {
-          callback(null, false);
+          return;
         }
+        loadTenantOriginsBounded().then((tenantOrigins) => {
+          callback(null, originAllowed(origin, tenantOrigins, fixedOrigins));
+        });
       },
       credentials: true,
     })
   );
-  app.use(express.json());
+  app.use(express.json({ limit: '1mb' }));
 
   // Health check
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
-  // Rotas
+  // Rotas. Plataforma antes do domínio para a chave não passar pelo JWT do salão.
+  app.use('/api/platform', platformRoutes);
   app.use('/api/auth', authRoutes);
   app.use('/api/public', publicRoutes);
   app.use('/api', domainRoutes);

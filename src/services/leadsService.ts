@@ -8,6 +8,7 @@ import { HttpError } from '../lib/httpError';
 import { sendNewLeadEmail } from '../lib/mailer';
 import { normalizeStoredPhone } from '../lib/phone';
 import { env } from '../config/env';
+import { parseSalonTheme, themeLabel, type SalonTheme } from './salonsService';
 
 export type LeadInput = {
   name: string;
@@ -15,6 +16,7 @@ export type LeadInput = {
   email?: string | null;
   salonName: string;
   teamSize?: string | null;
+  theme?: string | null;
   consent: boolean;
   source?: string | null;
   utm?: Record<string, string> | null;
@@ -29,6 +31,7 @@ export type LeadDTO = {
   email: string | null;
   salonName: string;
   teamSize: string | null;
+  theme: SalonTheme;
   source: string;
   createdAt: string;
 };
@@ -39,6 +42,7 @@ export type ValidatedLead = {
   email: string | null;
   salonName: string;
   teamSize: string | null;
+  theme: SalonTheme;
   source: string;
   utm: Record<string, string>;
 };
@@ -83,6 +87,7 @@ export function validateLead(input: Partial<LeadInput> | null | undefined): Vali
 
   const teamSize = clean(data.teamSize, 40) || null;
   const source = clean(data.source, 60) || 'landing';
+  const theme = parseSalonTheme(data.theme, { required: true });
 
   return {
     name,
@@ -90,6 +95,7 @@ export function validateLead(input: Partial<LeadInput> | null | undefined): Vali
     email: emailRaw || null,
     salonName,
     teamSize,
+    theme,
     source,
     utm: cleanUtm(data.utm),
   };
@@ -111,6 +117,7 @@ type LeadRow = {
   email: string | null;
   salon_name: string;
   team_size: string | null;
+  theme: string;
   source: string;
   created_at: Date;
 };
@@ -123,6 +130,7 @@ function mapLead(row: LeadRow): LeadDTO {
     email: row.email,
     salonName: row.salon_name,
     teamSize: row.team_size,
+    theme: parseSalonTheme(row.theme),
     source: row.source,
     createdAt: row.created_at.toISOString(),
   };
@@ -140,7 +148,7 @@ export async function createLead(
   const client = db(pool);
 
   const existing = await client.query<LeadRow>(
-    `SELECT id, name, phone, email, salon_name, team_size, source, created_at
+    `SELECT id, name, phone, email, salon_name, team_size, theme, source, created_at
        FROM leads
       WHERE phone = $1
         AND created_at > NOW() - ($2 || ' hours')::interval
@@ -154,15 +162,16 @@ export async function createLead(
   }
 
   const inserted = await client.query<LeadRow>(
-    `INSERT INTO leads (name, phone, email, salon_name, team_size, source, utm)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-     RETURNING id, name, phone, email, salon_name, team_size, source, created_at`,
+    `INSERT INTO leads (name, phone, email, salon_name, team_size, theme, source, utm)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+     RETURNING id, name, phone, email, salon_name, team_size, theme, source, created_at`,
     [
       data.name,
       data.phone,
       data.email,
       data.salonName,
       data.teamSize,
+      data.theme,
       data.source,
       JSON.stringify(data.utm),
     ],
@@ -179,6 +188,7 @@ export async function createLead(
       email: lead.email,
       salonName: lead.salonName,
       teamSize: lead.teamSize,
+      theme: themeLabel(lead.theme),
       source: lead.source,
       utm: data.utm,
     }).catch((err) => {

@@ -47,9 +47,14 @@ function logSimulatedMail(info: unknown, label: string): void {
 export async function sendNewBookingEmail(
   toEmail: string,
   details: NewBookingEmailDetails,
+  branding?: { name: string; email?: string | null; brandColor?: string },
 ): Promise<void> {
   const transporter = createTransporter();
-  const { name: salonName, email: salonEmail } = env.salon;
+  const salonName = branding?.name || 'Salão';
+  const salonEmail = branding?.email || env.smtp.user;
+  const brandColor = /^#[0-9a-fA-F]{6}$/.test(branding?.brandColor ?? '')
+    ? branding!.brandColor!
+    : '#4b5563';
 
   const text = [
     `Nova reserva em ${salonName}`,
@@ -70,7 +75,7 @@ export async function sendNewBookingEmail(
     text,
     html: `
       <div style="font-family:sans-serif;max-width:480px;margin:auto">
-        <h2 style="color:#7c2d3e">${salonName}</h2>
+        <h2 style="color:${brandColor}">${salonName}</h2>
         <p><strong>Nova reserva</strong></p>
         <ul style="padding-left:18px;line-height:1.6">
           <li><strong>Cliente:</strong> ${details.clientName}</li>
@@ -81,7 +86,7 @@ export async function sendNewBookingEmail(
         </ul>
         <p>
           <a href="${details.agendaUrl}"
-             style="display:inline-block;padding:12px 24px;background:#7c2d3e;color:#fff;border-radius:6px;text-decoration:none">
+             style="display:inline-block;padding:12px 24px;background:${brandColor};color:#fff;border-radius:6px;text-decoration:none">
             Abrir agenda
           </a>
         </p>
@@ -98,6 +103,7 @@ export type NewLeadEmailDetails = {
   email: string | null;
   salonName: string;
   teamSize: string | null;
+  theme: string;
   source: string;
   utm: Record<string, string>;
 };
@@ -130,6 +136,7 @@ export async function sendNewLeadEmail(
     `E-mail: ${details.email ?? '—'}`,
     `Salão: ${details.salonName}`,
     `Equipe: ${details.teamSize ?? '—'}`,
+    `Tema: ${details.theme}`,
     `Origem: ${details.source}${utmText ? ` (${utmText})` : ''}`,
   ];
 
@@ -150,6 +157,7 @@ export async function sendNewLeadEmail(
           ${row('E-mail', details.email ?? '—')}
           ${row('Salão', details.salonName)}
           ${row('Equipe', details.teamSize ?? '—')}
+          ${row('Tema', details.theme)}
           ${row('Origem', `${details.source}${utmText ? ` (${utmText})` : ''}`)}
         </ul>
         <p>

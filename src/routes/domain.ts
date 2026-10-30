@@ -1,6 +1,7 @@
 import { Router, Request } from 'express';
 import { verifyToken, requireRole } from '../middlewares/auth';
 import { attachLiveAccount } from '../middlewares/account';
+import { requireSessionSalon } from '../middlewares/salon';
 import { asyncHandler } from '../lib/asyncHandler';
 import { HttpError } from '../lib/httpError';
 import * as clients from '../services/clientsService';
@@ -18,11 +19,15 @@ import {
 } from '../services/notificationsService';
 import * as inbox from '../services/notificationsInboxService';
 import * as push from '../services/pushService';
+import * as salons from '../services/salonsService';
+import { parseImagePayload } from '../lib/imagePayload';
 import { env } from '../config/env';
+import { dateInZone, DEFAULT_SALON_TIMEZONE } from '../lib/time';
 
 const router = Router();
 
 router.use(verifyToken);
+router.use(asyncHandler(requireSessionSalon));
 router.use(asyncHandler(attachLiveAccount));
 
 const OPAQUE_CONFLICT = 'Horário indisponível.';
@@ -206,9 +211,35 @@ router.get(
   '/services',
   requireRole('dono', 'recepcao', 'profissional', 'cliente'),
   asyncHandler(async (req, res) => {
-    const list = await services.listServices(salonId(req));
+    const id = salonId(req);
+    const [list, logoUpdatedAt] = await Promise.all([
+      services.listServices(id),
+      salons.getSalonLogoUpdatedAt(id),
+    ]);
     const viewer = viewerOf(req);
-    res.json({ services: list.map((service) => access.presentService(service, viewer)) });
+    res.json({
+      services: list.map((service) => access.presentService(service, viewer)),
+      logoUpdatedAt,
+    });
+  }),
+);
+
+router.put(
+  '/salon/logo',
+  requireRole('dono'),
+  asyncHandler(async (req, res) => {
+    const image = parseImagePayload(req.body?.image);
+    const logoUpdatedAt = await salons.setSalonLogo(salonId(req), image);
+    res.json({ logoUpdatedAt });
+  }),
+);
+
+router.delete(
+  '/salon/logo',
+  requireRole('dono'),
+  asyncHandler(async (req, res) => {
+    await salons.clearSalonLogo(salonId(req));
+    res.json({ logoUpdatedAt: null });
   }),
 );
 
@@ -682,9 +713,7 @@ router.get(
   '/dashboard',
   requireRole('dono'),
   asyncHandler(async (req, res) => {
-    const today = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Sao_Paulo',
-    }).format(new Date());
+    const today = dateInZone(new Date(), req.salon?.timezone ?? DEFAULT_SALON_TIMEZONE);
     const monthStart = `${today.slice(0, 8)}01`;
     const [dayAppointments, dayTotals, monthBalance] = await Promise.all([
       appointments.listAppointments(salonId(req), { date: today }),

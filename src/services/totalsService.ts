@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import { getPool } from '../db/pool';
+import { civilDateSql } from '../lib/time';
 
 export type TotalsSummary = {
   totalAmount: number;
@@ -30,8 +31,8 @@ export async function getTotals(
      FROM appointments
      WHERE salon_id = $1
        AND status = 'concluido'
-       AND DATE(starts_at AT TIME ZONE 'America/Sao_Paulo') >= $2::date
-       AND DATE(starts_at AT TIME ZONE 'America/Sao_Paulo') <= $3::date`,
+       AND ${civilDateSql('starts_at', '$1')} >= $2::date
+       AND ${civilDateSql('starts_at', '$1')} <= $3::date`,
     [salonId, from, to],
   );
 
@@ -48,8 +49,8 @@ export async function getTotals(
      JOIN professionals p ON p.id = a.professional_id
      WHERE a.salon_id = $1
        AND a.status = 'concluido'
-       AND DATE(a.starts_at AT TIME ZONE 'America/Sao_Paulo') >= $2::date
-       AND DATE(a.starts_at AT TIME ZONE 'America/Sao_Paulo') <= $3::date
+       AND ${civilDateSql('a.starts_at', '$1')} >= $2::date
+       AND ${civilDateSql('a.starts_at', '$1')} <= $3::date
      GROUP BY a.professional_id, p.name
      ORDER BY amount DESC`,
     [salonId, from, to],
@@ -68,8 +69,8 @@ export async function getTotals(
      JOIN services s ON s.id = a.service_id
      WHERE a.salon_id = $1
        AND a.status = 'concluido'
-       AND DATE(a.starts_at AT TIME ZONE 'America/Sao_Paulo') >= $2::date
-       AND DATE(a.starts_at AT TIME ZONE 'America/Sao_Paulo') <= $3::date
+       AND ${civilDateSql('a.starts_at', '$1')} >= $2::date
+       AND ${civilDateSql('a.starts_at', '$1')} <= $3::date
      GROUP BY a.service_id, s.name
      ORDER BY amount DESC`,
     [salonId, from, to],
