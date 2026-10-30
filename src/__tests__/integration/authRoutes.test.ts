@@ -55,6 +55,7 @@ const SALON = {
   locale: 'pt-BR',
   contactEmail: null,
   brandColor: '#7c2d3e',
+  theme: 'classico' as const,
   frontendOrigins: [] as string[],
   clientCancelLeadMinutes: 120,
   active: true,

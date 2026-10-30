@@ -105,6 +105,7 @@ describe('acesso de profissional', () => {
       durationMinutes: 60,
       price: 120,
       active: true,
+      imageUpdatedAt: null,
     };
     expect(
       presentService(service, {

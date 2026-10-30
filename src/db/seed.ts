@@ -8,7 +8,12 @@
  */
 import bcrypt from 'bcrypt';
 import { getPool, closePool } from './pool';
-import { ANA_ESTER_BRAND_COLOR, ANA_ESTER_ORIGINS, ANA_ESTER_SLUG } from '../services/salonsService';
+import {
+  ANA_ESTER_BRAND_COLOR,
+  ANA_ESTER_ORIGINS,
+  ANA_ESTER_SLUG,
+  ANA_ESTER_THEME,
+} from '../services/salonsService';
 
 const SALON_NAME = process.env.SALON_NAME ?? 'Studio Ana Ester';
 const SALON_EMAIL = process.env.SALON_EMAIL ?? 'contato@studioester.com.br';
@@ -25,12 +30,20 @@ async function seed() {
   const salonResult = await pool.query<{ id: string }>(
     `INSERT INTO salons (
        name, slug, phone, timezone, currency, locale,
-       contact_email, brand_color, frontend_origins, client_cancel_lead_minutes, active
+       contact_email, brand_color, frontend_origins, client_cancel_lead_minutes, active, theme
      )
-     VALUES ($1, $2, $3, 'America/Sao_Paulo', 'BRL', 'pt-BR', $4, $5, $6, 120, TRUE)
+     VALUES ($1, $2, $3, 'America/Sao_Paulo', 'BRL', 'pt-BR', $4, $5, $6, 120, TRUE, $7)
      ON CONFLICT (slug) DO NOTHING
      RETURNING id`,
-    [SALON_NAME, ANA_ESTER_SLUG, '(11) 99999-0000', SALON_EMAIL, ANA_ESTER_BRAND_COLOR, ANA_ESTER_ORIGINS]
+    [
+      SALON_NAME,
+      ANA_ESTER_SLUG,
+      '(11) 99999-0000',
+      SALON_EMAIL,
+      ANA_ESTER_BRAND_COLOR,
+      ANA_ESTER_ORIGINS,
+      ANA_ESTER_THEME,
+    ]
   );
 
   let salonId: string;
@@ -43,6 +56,10 @@ async function seed() {
       [ANA_ESTER_SLUG]
     );
     salonId = existing.rows[0].id;
+    await pool.query(
+      `UPDATE salons SET theme = $1 WHERE slug = $2 AND theme IS NULL`,
+      [ANA_ESTER_THEME, ANA_ESTER_SLUG],
+    );
     console.log(`  ℹ️  Salão já existia: ${ANA_ESTER_SLUG} (${salonId})`);
   }
 

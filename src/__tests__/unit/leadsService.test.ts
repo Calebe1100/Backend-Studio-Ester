@@ -8,6 +8,7 @@ const valid = {
   salonName: 'Studio Bela Vista',
   teamSize: '2 a 3',
   consent: true,
+  theme: 'classico',
 };
 
 describe('validateLead', () => {
@@ -22,6 +23,17 @@ describe('validateLead', () => {
     expect(lead.email).toBe('ana@exemplo.com');
     expect(lead.source).toBe('landing');
     expect(lead.utm).toEqual({ utm_source: 'instagram', utm_campaign: 'out' });
+    expect(lead.theme).toBe('classico');
+  });
+
+  it('aceita tema moderno e normaliza o acento de básico', () => {
+    expect(validateLead({ ...valid, theme: 'moderno' }).theme).toBe('moderno');
+    expect(validateLead({ ...valid, theme: 'Básico' }).theme).toBe('basico');
+  });
+
+  it('exige um tema conhecido', () => {
+    expect(() => validateLead({ ...valid, theme: undefined })).toThrow(/tema/i);
+    expect(() => validateLead({ ...valid, theme: 'rosa' })).toThrow(/Tema/);
   });
 
   it('aceita e-mail vazio como opcional', () => {

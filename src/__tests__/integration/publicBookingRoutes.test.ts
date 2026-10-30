@@ -5,13 +5,14 @@ import { createVisitorClient } from '../../services/clientsService';
 import { createAppointment, listBusySlots } from '../../services/appointmentsService';
 import { listProfessionals, getActiveProfessional } from '../../services/professionalsService';
 import { listServices, getActiveService } from '../../services/servicesService';
-import { requireSalonBySlug } from '../../services/salonsService';
+import { getSalonLogoUpdatedAt, requireSalonBySlug } from '../../services/salonsService';
 import { notifyStaffNewBooking } from '../../services/notificationsService';
 import { publicBookLimiter, publicCatalogLimiter } from '../../routes/public';
 
 jest.mock('../../services/salonsService', () => ({
   requireSalonBySlug: jest.fn(),
   getSalonById: jest.fn(),
+  getSalonLogoUpdatedAt: jest.fn(),
   provisionSalon: jest.fn(),
   normalizeSlug: (value: string) => String(value).trim().toLowerCase(),
 }));
@@ -41,6 +42,7 @@ jest.mock('../../services/notificationsService', () => ({
 }));
 
 const mockRequireSalon = requireSalonBySlug as jest.MockedFunction<typeof requireSalonBySlug>;
+const mockLogoUpdatedAt = getSalonLogoUpdatedAt as jest.MockedFunction<typeof getSalonLogoUpdatedAt>;
 const mockCreateVisitor = createVisitorClient as jest.MockedFunction<typeof createVisitorClient>;
 const mockCreateAppointment = createAppointment as jest.MockedFunction<typeof createAppointment>;
 const mockBusy = listBusySlots as jest.MockedFunction<typeof listBusySlots>;
@@ -63,6 +65,7 @@ const salon = {
   locale: 'pt-BR',
   contactEmail: null,
   brandColor: '#7c2d3e',
+  theme: 'classico' as const,
   frontendOrigins: [] as string[],
   clientCancelLeadMinutes: 120,
   active: true,
@@ -74,6 +77,7 @@ function withSalon(req: request.Test) {
 
 beforeEach(() => {
   mockRequireSalon.mockResolvedValue(salon);
+  mockLogoUpdatedAt.mockResolvedValue(null);
   mockNotify.mockResolvedValue(undefined);
   mockGetProfessional.mockResolvedValue({
     id: 'pro-1',
@@ -91,9 +95,28 @@ beforeEach(() => {
     durationMinutes: 60,
     price: 120,
     active: true,
+    imageUpdatedAt: null,
   });
   publicBookLimiter.reset();
   publicCatalogLimiter.reset();
+});
+
+describe('GET /api/public/branding', () => {
+  it('devolve nome, slug e tema do salão', async () => {
+    const res = await withSalon(request(app).get('/api/public/branding'));
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      name: 'Studio Ana Ester',
+      slug: 'ana-ester',
+      theme: 'classico',
+    });
+  });
+
+  it('exige o slug do salão', async () => {
+    const res = await request(app).get('/api/public/branding');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/salão/i);
+  });
 });
 
 describe('GET /api/public/catalog', () => {
@@ -121,8 +144,8 @@ describe('GET /api/public/catalog', () => {
       },
     ]);
     mockListServices.mockResolvedValueOnce([
-      { id: 'svc-1', name: 'Corte', durationMinutes: 60, price: 120, active: true },
-      { id: 'svc-2', name: 'Antigo', durationMinutes: 30, price: 40, active: false },
+      { id: 'svc-1', name: 'Corte', durationMinutes: 60, price: 120, active: true, imageUpdatedAt: null },
+      { id: 'svc-2', name: 'Antigo', durationMinutes: 30, price: 40, active: false, imageUpdatedAt: null },
     ]);
 
     const res = await withSalon(request(app).get('/api/public/catalog'));
@@ -130,8 +153,9 @@ describe('GET /api/public/catalog', () => {
     expect(res.body.professionals).toHaveLength(1);
     expect(res.body.professionals[0].userId).toBeUndefined();
     expect(res.body.services).toEqual([
-      { id: 'svc-1', name: 'Corte', durationMinutes: 60, price: 120, active: true },
+      { id: 'svc-1', name: 'Corte', durationMinutes: 60, price: 120, active: true, imageUpdatedAt: null },
     ]);
+    expect(res.body.logoUpdatedAt).toBeNull();
   });
 
   it('não encaminha rota pública desconhecida para o login', async () => {

@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS salons (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS logo BYTEA;
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS logo_type TEXT;
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS logo_updated_at TIMESTAMPTZ;
+
 -- Usuários com credenciais persistidas no banco
 CREATE TABLE IF NOT EXISTS users (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -121,6 +125,10 @@ CREATE TABLE IF NOT EXISTS services (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE services ADD COLUMN IF NOT EXISTS image BYTEA;
+ALTER TABLE services ADD COLUMN IF NOT EXISTS image_type TEXT;
+ALTER TABLE services ADD COLUMN IF NOT EXISTS image_updated_at TIMESTAMPTZ;
 
 -- Vínculo profissional ↔ serviços que realiza
 CREATE TABLE IF NOT EXISTS professional_services (
@@ -314,10 +322,28 @@ SET frontend_origins = ARRAY[
 WHERE slug = 'ana-ester'
   AND cardinality(frontend_origins) = 0;
 
+-- Tema visual do app. classico é o preto e dourado do Studio Ester.
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS theme TEXT;
+UPDATE salons SET theme = 'classico' WHERE slug = 'ana-ester' AND theme IS NULL;
+UPDATE salons SET theme = 'basico' WHERE theme IS NULL;
+ALTER TABLE salons ALTER COLUMN theme SET DEFAULT 'basico';
+ALTER TABLE salons ALTER COLUMN theme SET NOT NULL;
+ALTER TABLE salons DROP CONSTRAINT IF EXISTS salons_theme_check;
+ALTER TABLE salons ADD CONSTRAINT salons_theme_check
+  CHECK (theme IN ('classico', 'moderno', 'basico'));
+
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS theme TEXT;
+UPDATE leads SET theme = 'basico' WHERE theme IS NULL;
+ALTER TABLE leads ALTER COLUMN theme SET DEFAULT 'basico';
+ALTER TABLE leads ALTER COLUMN theme SET NOT NULL;
+ALTER TABLE leads DROP CONSTRAINT IF EXISTS leads_theme_check;
+ALTER TABLE leads ADD CONSTRAINT leads_theme_check
+  CHECK (theme IN ('classico', 'moderno', 'basico'));
+
 -- Banco novo (ambiente de teste) não herda o salão da produção.
 INSERT INTO salons (
   name, slug, timezone, currency, locale, brand_color, frontend_origins,
-  client_cancel_lead_minutes, active
+  client_cancel_lead_minutes, active, theme
 )
 SELECT
   'Studio Ana Ester',
@@ -332,7 +358,8 @@ SELECT
     'https://studio-ester.vercel.app'
   ]::text[],
   120,
-  TRUE
+  TRUE,
+  'classico'
 WHERE NOT EXISTS (SELECT 1 FROM salons WHERE slug = 'ana-ester');
 
 -- E-mail único por salão, não no banco inteiro.
