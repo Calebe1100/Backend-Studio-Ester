@@ -236,7 +236,7 @@ router.post(
 
 /**
  * POST /api/public/leads
- * Body: { name, phone, email?, salonName, teamSize?, theme, consent, source?, utm?, website? }
+ * Body: { name, phone, email?, salonName, teamSize?, theme?, consent, source?, utm?, website? }
  * Captura lead comercial da landing page SalonSign.
  */
 router.post(

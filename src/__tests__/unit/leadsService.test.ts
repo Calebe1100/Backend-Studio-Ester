@@ -31,8 +31,9 @@ describe('validateLead', () => {
     expect(validateLead({ ...valid, theme: 'Básico' }).theme).toBe('basico');
   });
 
-  it('exige um tema conhecido', () => {
-    expect(() => validateLead({ ...valid, theme: undefined })).toThrow(/tema/i);
+  it('assume básico quando a landing não envia tema e rejeita tema desconhecido', () => {
+    expect(validateLead({ ...valid, theme: undefined }).theme).toBe('basico');
+    expect(validateLead({ ...valid, theme: '' }).theme).toBe('basico');
     expect(() => validateLead({ ...valid, theme: 'rosa' })).toThrow(/Tema/);
   });
 

@@ -8,7 +8,7 @@ import { HttpError } from '../lib/httpError';
 import { sendNewLeadEmail } from '../lib/mailer';
 import { normalizeStoredPhone } from '../lib/phone';
 import { env } from '../config/env';
-import { parseSalonTheme, themeLabel, type SalonTheme } from './salonsService';
+import { normalizeThemeKey, parseSalonTheme, themeLabel, type SalonTheme } from './salonsService';
 
 export type LeadInput = {
   name: string;
@@ -87,7 +87,8 @@ export function validateLead(input: Partial<LeadInput> | null | undefined): Vali
 
   const teamSize = clean(data.teamSize, 40) || null;
   const source = clean(data.source, 60) || 'landing';
-  const theme = parseSalonTheme(data.theme, { required: true });
+  // A landing não pede tema. Ausente fica básico no banco e "a definir" no aviso.
+  const theme = parseSalonTheme(data.theme);
 
   return {
     name,
@@ -188,7 +189,7 @@ export async function createLead(
       email: lead.email,
       salonName: lead.salonName,
       teamSize: lead.teamSize,
-      theme: themeLabel(lead.theme),
+      theme: normalizeThemeKey(input.theme) ? themeLabel(lead.theme) : 'A definir',
       source: lead.source,
       utm: data.utm,
     }).catch((err) => {
