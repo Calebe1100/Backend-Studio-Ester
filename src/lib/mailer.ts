@@ -12,6 +12,7 @@ export type NewBookingEmailDetails = {
   date: string;
   start: string;
   agendaUrl: string;
+  depositLabel?: string;
 };
 
 function createTransporter() {
@@ -64,6 +65,7 @@ export async function sendNewBookingEmail(
     `Profissional: ${details.professionalName}`,
     `Data: ${details.date}`,
     `Horário: ${details.start}`,
+    ...(details.depositLabel ? [`Sinal: ${details.depositLabel}`] : []),
     '',
     `Abrir agenda: ${details.agendaUrl}`,
   ].join('\n');
@@ -83,6 +85,7 @@ export async function sendNewBookingEmail(
           <li><strong>Profissional:</strong> ${details.professionalName}</li>
           <li><strong>Data:</strong> ${details.date}</li>
           <li><strong>Horário:</strong> ${details.start}</li>
+          ${details.depositLabel ? `<li><strong>Sinal:</strong> ${details.depositLabel}</li>` : ''}
         </ul>
         <p>
           <a href="${details.agendaUrl}"

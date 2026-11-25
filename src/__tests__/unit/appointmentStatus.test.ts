@@ -4,10 +4,10 @@ import { assertClientStatusChange } from '../../services/appointmentsService';
 const startsAt = new Date('2026-09-26T15:00:00-03:00');
 
 describe('assertClientStatusChange', () => {
-  it('permite confirmar um horário agendado', () => {
+  it('recusa a confirmação do cliente', () => {
     expect(() =>
       assertClientStatusChange('agendado', 'confirmado', startsAt, new Date('2026-09-26T10:00:00-03:00')),
-    ).not.toThrow();
+    ).toThrow(/cancelar o próprio agendamento/);
   });
 
   it('permite cancelar com duas horas ou mais de antecedência', () => {
@@ -36,7 +36,7 @@ describe('assertClientStatusChange', () => {
   it('recusa status operacionais do salão', () => {
     const now = new Date('2026-09-26T10:00:00-03:00');
     expect(() => assertClientStatusChange('agendado', 'concluido', startsAt, now)).toThrow(
-      /confirmar ou cancelar/,
+      /cancelar o próprio agendamento/,
     );
     expect(() => assertClientStatusChange('agendado', 'em_atendimento', startsAt, now)).toThrow(
       HttpError,

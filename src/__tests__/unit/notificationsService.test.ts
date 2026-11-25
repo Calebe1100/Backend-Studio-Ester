@@ -66,6 +66,11 @@ describe('notifyStaffNewBooking', () => {
       expect.objectContaining({ url: '/agenda' }),
       undefined,
     );
+    expect(mockEmail).toHaveBeenCalledWith(
+      'ester@test.com',
+      expect.not.objectContaining({ depositLabel: expect.any(String) }),
+      expect.any(Object),
+    );
     expect(mockInbox).toHaveBeenCalledWith(
       'salon-1',
       [
@@ -74,6 +79,33 @@ describe('notifyStaffNewBooking', () => {
       ],
       undefined,
     );
+  });
+
+  it('cita o sinal no e-mail e no sininho', async () => {
+    mockStaff.mockResolvedValueOnce([
+      { id: 'u1', name: 'Ester', email: 'ester@test.com', phone: null },
+    ]);
+
+    await notifyStaffNewBooking('salon-1', {
+      clientName: 'Maria',
+      serviceName: 'Corte',
+      professionalName: 'Ester',
+      date: '2026-09-20',
+      start: '10:00',
+      depositAmount: 30,
+    });
+
+    expect(mockEmail).toHaveBeenCalledWith(
+      'ester@test.com',
+      expect.objectContaining({ depositLabel: expect.stringMatching(/30/) }),
+      expect.any(Object),
+    );
+    expect(mockInbox).toHaveBeenCalledWith(
+      'salon-1',
+      [expect.objectContaining({ body: expect.stringMatching(/Sinal/) })],
+      undefined,
+    );
+    expect(mockWa).not.toHaveBeenCalled();
   });
 
   it('não lança se um canal falhar', async () => {

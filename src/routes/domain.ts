@@ -62,6 +62,26 @@ function salonId(req: Request): string {
   return req.user!.salonId;
 }
 
+function readVisitor(value: unknown): { name: string; phone: string } | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as { name?: unknown; phone?: unknown };
+  if (typeof record.name !== 'string' && typeof record.phone !== 'string') return null;
+  return {
+    name: typeof record.name === 'string' ? record.name : '',
+    phone: typeof record.phone === 'string' ? record.phone : '',
+  };
+}
+
+function presentSavedClient(req: Request, client: clients.ClientDTO) {
+  if (req.user!.role !== 'profissional') return client;
+  const canSeePhone = Boolean(
+    req.account?.permissions?.clienteContato || req.account?.permissions?.listaClientes,
+  );
+  const visible = access.presentClient(client);
+  if (!canSeePhone) return { ...visible, phone: '', notes: '' };
+  return visible;
+}
+
 function dateRange(req: Request): { from: string; to: string } | null {
   const from = typeof req.query.from === 'string' ? req.query.from : '';
   const to = typeof req.query.to === 'string' ? req.query.to : '';
@@ -212,14 +232,17 @@ router.get(
   requireRole('dono', 'recepcao', 'profissional', 'cliente'),
   asyncHandler(async (req, res) => {
     const id = salonId(req);
-    const [list, logoUpdatedAt] = await Promise.all([
+    const [list, logoUpdatedAt, salon] = await Promise.all([
       services.listServices(id),
       salons.getSalonLogoUpdatedAt(id),
+      salons.getSalonById(id),
     ]);
     const viewer = viewerOf(req);
     res.json({
       services: list.map((service) => access.presentService(service, viewer)),
       logoUpdatedAt,
+      pixKey: salon?.pixKey ?? null,
+      depositPercent: salon?.depositPercent ?? 0,
     });
   }),
 );
@@ -240,6 +263,18 @@ router.delete(
   asyncHandler(async (req, res) => {
     await salons.clearSalonLogo(salonId(req));
     res.json({ logoUpdatedAt: null });
+  }),
+);
+
+router.put(
+  '/salon/payment',
+  requireRole('dono'),
+  asyncHandler(async (req, res) => {
+    const payment = await salons.updateSalonPayment(salonId(req), {
+      pixKey: req.body?.pixKey,
+      depositPercent: req.body?.depositPercent,
+    });
+    res.json(payment);
   }),
 );
 
@@ -323,14 +358,30 @@ router.post(
   asyncHandler(async (req, res) => {
     assertProfessionalBooking(req, req.body?.professionalId);
     const opaque = req.user!.role === 'profissional';
+    const visitor = readVisitor(req.body?.visitor);
+    let clientId = typeof req.body?.clientId === 'string' ? req.body.clientId : '';
+    let client = visitor ? await clients.createAgendaVisitor(salonId(req), visitor) : null;
+    if (client) clientId = client.id;
+
+    const visitorPhone = typeof req.body?.visitorPhone === 'string' ? req.body.visitorPhone : undefined;
+    const touched = await clients.ensureVisitorPhone(
+      salonId(req),
+      clientId,
+      visitor ? visitor.phone : visitorPhone,
+    );
+    if (touched) client = touched;
+
     const appointment = await appointments.createAppointment(
       salonId(req),
-      req.body,
+      { ...req.body, clientId },
       undefined,
       opaque ? { conflictMessage: OPAQUE_CONFLICT } : undefined,
     );
     const [presented] = await presentAppointments(req, [appointment]);
-    res.status(201).json({ appointment: presented });
+    res.status(201).json({
+      appointment: presented,
+      ...(client ? { client: presentSavedClient(req, client) } : {}),
+    });
   }),
 );
 
@@ -366,7 +417,10 @@ router.post(
         notes,
       },
       undefined,
-      req.user!.role === 'profissional' ? { conflictMessage: OPAQUE_CONFLICT } : undefined,
+      {
+        chargeDeposit: true,
+        ...(req.user!.role === 'profissional' ? { conflictMessage: OPAQUE_CONFLICT } : {}),
+      },
     );
 
     // Cliente reservou → avisa a equipe (e-mail / push / WhatsApp). Não bloqueia o 201.
@@ -383,6 +437,7 @@ router.post(
             professionalName: professional.name,
             date,
             start,
+            depositAmount: appointment.depositAmount,
           });
         } catch (err) {
           console.error('[notify] Falha ao montar notificação de reserva:', err);
@@ -424,6 +479,9 @@ router.put(
       }
       assertProfessionalBooking(req, req.body?.professionalId);
     }
+    const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId : '';
+    const visitorPhone = typeof req.body?.visitorPhone === 'string' ? req.body.visitorPhone : undefined;
+    const client = await clients.ensureVisitorPhone(salonId(req), clientId, visitorPhone);
     const appointment = await appointments.updateAppointment(
       salonId(req),
       req.params.id,
@@ -432,7 +490,10 @@ router.put(
       req.user!.role === 'profissional' ? { conflictMessage: OPAQUE_CONFLICT } : undefined,
     );
     const [presented] = await presentAppointments(req, [appointment]);
-    res.json({ appointment: presented });
+    res.json({
+      appointment: presented,
+      ...(client ? { client: presentSavedClient(req, client) } : {}),
+    });
   }),
 );
 
@@ -458,7 +519,11 @@ router.patch(
         return;
       }
       const nextStatus = String(req.body.status ?? '');
-      const operational = ['confirmado', 'em_atendimento', 'concluido', 'nao_compareceu'];
+      if (nextStatus === 'confirmado') {
+        res.status(403).json({ error: 'A confirmação do horário é feita pela administração.' });
+        return;
+      }
+      const operational = ['em_atendimento', 'concluido', 'nao_compareceu'];
       if (nextStatus === 'cancelado') {
         if (!req.account?.permissions?.agendar) {
           res.status(403).json({ error: 'Acesso negado para este papel' });

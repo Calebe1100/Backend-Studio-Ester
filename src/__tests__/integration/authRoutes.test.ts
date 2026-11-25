@@ -59,6 +59,8 @@ const SALON = {
   frontendOrigins: [] as string[],
   clientCancelLeadMinutes: 120,
   active: true,
+  pixKey: null,
+  depositPercent: 0,
 };
 
 const app = createApp();

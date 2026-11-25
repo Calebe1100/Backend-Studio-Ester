@@ -68,6 +68,8 @@ export type SalonSettings = {
   frontendOrigins: string[];
   clientCancelLeadMinutes: number;
   active: boolean;
+  pixKey: string | null;
+  depositPercent: number;
 };
 
 type SalonRow = {
@@ -85,10 +87,13 @@ type SalonRow = {
   frontend_origins: string[] | null;
   client_cancel_lead_minutes: number;
   active: boolean;
+  pix_key: string | null;
+  deposit_percent: string | number | null;
 };
 
 const SALON_SELECT = `id, name, slug, phone, address, timezone, currency, locale,
-  contact_email, brand_color, theme, frontend_origins, client_cancel_lead_minutes, active`;
+  contact_email, brand_color, theme, frontend_origins, client_cancel_lead_minutes, active,
+  pix_key, deposit_percent`;
 
 export type ProvisionSalonInput = {
   name: string;
@@ -142,6 +147,40 @@ function mapSalon(row: SalonRow): SalonSettings {
     frontendOrigins: row.frontend_origins ?? [],
     clientCancelLeadMinutes: row.client_cancel_lead_minutes ?? DEFAULT_CANCEL_LEAD_MINUTES,
     active: row.active,
+    pixKey: row.pix_key?.trim() || null,
+    depositPercent: row.deposit_percent == null ? 0 : Number(row.deposit_percent),
+  };
+}
+
+export function parseDepositPercent(value: unknown): number {
+  const percent = typeof value === 'number' ? value : Number(String(value ?? '').replace(',', '.'));
+  if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+    throw new HttpError(400, 'O percentual do sinal deve ficar entre 0 e 100.');
+  }
+  return Math.round(percent * 100) / 100;
+}
+
+export async function updateSalonPayment(
+  salonId: string,
+  input: { pixKey?: unknown; depositPercent?: unknown },
+  pool?: Pool,
+): Promise<{ pixKey: string | null; depositPercent: number }> {
+  const rawKey = String(input.pixKey ?? '').trim();
+  if (rawKey.length > 140) throw new HttpError(400, 'A chave PIX é longa demais.');
+  const pixKey = rawKey || null;
+  const depositPercent = parseDepositPercent(input.depositPercent);
+
+  const result = await db(pool).query<{ pix_key: string | null; deposit_percent: string | number }>(
+    `UPDATE salons
+     SET pix_key = $2, deposit_percent = $3
+     WHERE id = $1
+     RETURNING pix_key, deposit_percent`,
+    [salonId, pixKey, depositPercent],
+  );
+  if (!result.rows[0]) throw new HttpError(404, 'Salão não encontrado.');
+  return {
+    pixKey: result.rows[0].pix_key?.trim() || null,
+    depositPercent: Number(result.rows[0].deposit_percent),
   };
 }
 

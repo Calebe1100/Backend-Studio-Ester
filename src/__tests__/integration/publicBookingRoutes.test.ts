@@ -69,6 +69,8 @@ const salon = {
   frontendOrigins: [] as string[],
   clientCancelLeadMinutes: 120,
   active: true,
+  pixKey: '11999998888',
+  depositPercent: 30,
 };
 
 function withSalon(req: request.Test) {
@@ -156,6 +158,8 @@ describe('GET /api/public/catalog', () => {
       { id: 'svc-1', name: 'Corte', durationMinutes: 60, price: 120, active: true, imageUpdatedAt: null },
     ]);
     expect(res.body.logoUpdatedAt).toBeNull();
+    expect(res.body.pixKey).toBe('11999998888');
+    expect(res.body.depositPercent).toBe(30);
   });
 
   it('não encaminha rota pública desconhecida para o login', async () => {
@@ -229,10 +233,19 @@ describe('POST /api/public/appointments/book', () => {
       notes: '',
       servicePriceSnapshot: 120,
       serviceDurationSnapshot: 60,
+      depositAmount: 36,
     });
 
     const res = await withSalon(request(app).post('/api/public/appointments/book').send(payload));
     expect(res.status).toBe(201);
+    expect(mockCreateAppointment).toHaveBeenCalledWith(
+      'salon-1',
+      expect.objectContaining({ professionalId: 'pro-1', serviceId: 'svc-1' }),
+      undefined,
+      { chargeDeposit: true },
+    );
+    expect(res.body.appointment.status).toBe('agendado');
+    expect(res.body.appointment.depositAmount).toBe(36);
     expect(mockCreateVisitor).toHaveBeenCalledWith(
       'salon-1',
       expect.objectContaining({ email: 'ana@exemplo.com', name: 'Visitante Ana' }),
@@ -264,6 +277,7 @@ describe('POST /api/public/appointments/book', () => {
       notes: '',
       servicePriceSnapshot: 120,
       serviceDurationSnapshot: 60,
+      depositAmount: 36,
     });
 
     let last = { status: 0 };
