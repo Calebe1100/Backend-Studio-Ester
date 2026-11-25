@@ -15,7 +15,12 @@ export type NewBookingNotifyPayload = {
   professionalName: string;
   date: string;
   start: string;
+  depositAmount?: number | null;
 };
+
+function formatBrl(amount: number): string {
+  return amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
 
 function frontendBaseUrl(): string {
   const first = env.frontendUrl.split(',')[0]?.trim();
@@ -46,7 +51,13 @@ export async function notifyStaffNewBooking(
     const agendaUrl = `${frontendBaseUrl()}/agenda`;
     const dateLabel = formatDateBr(payload.date);
     const title = `${salonName} — Nova reserva`;
-    const body = `${payload.clientName} · ${payload.serviceName} · ${dateLabel} às ${payload.start}`;
+    const depositLabel =
+      payload.depositAmount != null && payload.depositAmount > 0
+        ? formatBrl(payload.depositAmount)
+        : undefined;
+    const body = `${payload.clientName} · ${payload.serviceName} · ${dateLabel} às ${payload.start}${
+      depositLabel ? ` · Sinal ${depositLabel}` : ''
+    }`;
 
     const emailJobs = staff
       .filter((s) => s.email)
@@ -60,6 +71,7 @@ export async function notifyStaffNewBooking(
             date: dateLabel,
             start: payload.start,
             agendaUrl,
+            depositLabel,
           },
           {
             name: salonName,

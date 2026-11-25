@@ -183,6 +183,7 @@ CREATE TABLE IF NOT EXISTS appointments (
   service_price_snapshot   NUMERIC(10,2) NOT NULL,
   service_duration_snapshot INTEGER NOT NULL,
   notes                    TEXT,
+  deposit_amount           NUMERIC(10,2),
   created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -339,6 +340,14 @@ ALTER TABLE leads ALTER COLUMN theme SET NOT NULL;
 ALTER TABLE leads DROP CONSTRAINT IF EXISTS leads_theme_check;
 ALTER TABLE leads ADD CONSTRAINT leads_theme_check
   CHECK (theme IN ('classico', 'moderno', 'basico'));
+
+-- Sinal cobrado no agendamento do cliente, pago direto na chave PIX do estúdio.
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS pix_key TEXT;
+ALTER TABLE salons ADD COLUMN IF NOT EXISTS deposit_percent NUMERIC(5,2) NOT NULL DEFAULT 0;
+ALTER TABLE salons DROP CONSTRAINT IF EXISTS salons_deposit_percent_check;
+ALTER TABLE salons ADD CONSTRAINT salons_deposit_percent_check
+  CHECK (deposit_percent >= 0 AND deposit_percent <= 100);
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS deposit_amount NUMERIC(10,2);
 
 -- Banco novo (ambiente de teste) não herda o salão da produção.
 INSERT INTO salons (

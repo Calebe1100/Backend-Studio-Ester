@@ -93,6 +93,8 @@ router.get(
         .map(({ userId: _userId, ...item }) => item),
       services: serviceList.filter((item) => item.active),
       logoUpdatedAt,
+      pixKey: req.salon!.pixKey,
+      depositPercent: req.salon!.depositPercent,
     });
   }),
 );
@@ -191,14 +193,19 @@ router.post(
     const { name, phone, email, professionalId, serviceId, date, start, notes } = body;
     const salonId = req.salon!.id;
     const client = await clients.createVisitorClient(salonId, { name, phone, email, notes });
-    const appointment = await appointments.createAppointment(salonId, {
-      clientId: client.id,
-      professionalId,
-      serviceId,
-      date,
-      start,
-      notes,
-    });
+    const appointment = await appointments.createAppointment(
+      salonId,
+      {
+        clientId: client.id,
+        professionalId,
+        serviceId,
+        date,
+        start,
+        notes,
+      },
+      undefined,
+      { chargeDeposit: true },
+    );
 
     void (async () => {
       try {
@@ -212,6 +219,7 @@ router.post(
           professionalName: professional.name,
           date,
           start,
+          depositAmount: appointment.depositAmount,
         });
       } catch (err) {
         console.error('[notify] Falha ao montar notificação de reserva visitante:', err);
@@ -229,6 +237,7 @@ router.post(
         status: appointment.status,
         servicePriceSnapshot: appointment.servicePriceSnapshot,
         serviceDurationSnapshot: appointment.serviceDurationSnapshot,
+        depositAmount: appointment.depositAmount,
       },
     });
   }),

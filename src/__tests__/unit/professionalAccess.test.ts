@@ -21,6 +21,7 @@ const appointment: AppointmentDTO = {
   notes: 'Prefere corte curto',
   servicePriceSnapshot: 120,
   serviceDurationSnapshot: 60,
+  depositAmount: 30,
 };
 
 describe('acesso de profissional', () => {
@@ -56,6 +57,7 @@ describe('acesso de profissional', () => {
     expect(view.clientName).toBe('Maria');
     expect(view.notes).toBe('');
     expect(view.servicePriceSnapshot).toBeNull();
+    expect(view.depositAmount).toBeNull();
   });
 
   it('mantém o próprio atendimento e o preço quando a opção está ligada', () => {
@@ -75,6 +77,7 @@ describe('acesso de profissional', () => {
     expect(view.clientName).toBe('Maria Souza');
     expect(view.notes).toBe('Prefere corte curto');
     expect(view.servicePriceSnapshot).toBe(120);
+    expect(view.depositAmount).toBe(30);
   });
 
   it('não reduz o que dono e recepção recebem', () => {
@@ -85,17 +88,62 @@ describe('acesso de profissional', () => {
     });
     expect(view.clientName).toBe('Maria Souza');
     expect(view.clientKind).toBe('cadastrado');
+    expect(view.clientPhone).toBe('');
     expect(view.servicePriceSnapshot).toBe(120);
+    expect(view.depositAmount).toBe(30);
   });
 
-  it('preserva o tipo visitante no agendamento apresentado', () => {
+  it('preserva o tipo visitante e o telefone no agendamento apresentado', () => {
     const view = presentAppointment(
       appointment,
-      { name: 'Ana Visitante', kind: 'visitante' },
+      { name: 'Ana Visitante', kind: 'visitante', phone: '11988887777' },
       { role: 'dono', professionalId: null, permissions: null },
     );
     expect(view.clientKind).toBe('visitante');
     expect(view.clientName).toBe('Ana Visitante');
+    expect(view.clientPhone).toBe('11988887777');
+  });
+
+  it('omite o telefone do visitante sem permissão de contato', () => {
+    const view = presentAppointment(
+      appointment,
+      { name: 'Ana Visitante', kind: 'visitante', phone: '11988887777' },
+      {
+        role: 'profissional',
+        professionalId: 'pro-2',
+        permissions: {
+          agendaPropria: true,
+          agendaEquipe: true,
+          clienteContato: false,
+          listaClientes: false,
+          precos: false,
+          agendar: true,
+        },
+      },
+    );
+    expect(view.clientName).toBe('Ana');
+    expect(view.clientPhone).toBe('');
+  });
+
+  it('mostra o telefone do visitante quando o contato está liberado', () => {
+    const view = presentAppointment(
+      appointment,
+      { name: 'Ana Visitante', kind: 'visitante', phone: '11988887777' },
+      {
+        role: 'profissional',
+        professionalId: 'pro-1',
+        permissions: {
+          agendaPropria: true,
+          agendaEquipe: false,
+          clienteContato: true,
+          listaClientes: false,
+          precos: false,
+          agendar: true,
+        },
+      },
+    );
+    expect(view.clientName).toBe('Ana Visitante');
+    expect(view.clientPhone).toBe('11988887777');
   });
 
   it('tira o preço do serviço e o e-mail do cliente', () => {

@@ -85,6 +85,12 @@ function optionalPhone(raw?: string | null): string | null {
   return phone;
 }
 
+function requirePhone(raw?: string | null): string {
+  const phone = optionalPhone(raw);
+  if (!phone) throw new HttpError(400, 'Informe um telefone válido com DDD.');
+  return phone;
+}
+
 const CLIENT_SELECT = `id, name, phone, email, notes, active, user_id, kind`;
 
 export const CLIENT_TEMPORARY_PASSWORD = 'Cliente@123';
@@ -105,7 +111,7 @@ export async function listClients(salonId: string, pool?: Pool): Promise<ClientD
   return result.rows.map(mapClient);
 }
 
-export type ClientSummary = { name: string; kind: ClientKind };
+export type ClientSummary = { name: string; kind: ClientKind; phone: string };
 
 export async function listClientNames(
   salonId: string,
@@ -114,8 +120,13 @@ export async function listClientNames(
 ): Promise<Map<string, ClientSummary>> {
   const map = new Map<string, ClientSummary>();
   if (ids.length === 0) return map;
-  const result = await db(pool).query<{ id: string; name: string; kind: ClientKind | null }>(
-    `SELECT id, name, kind FROM clients
+  const result = await db(pool).query<{
+    id: string;
+    name: string;
+    kind: ClientKind | null;
+    phone: string | null;
+  }>(
+    `SELECT id, name, kind, phone FROM clients
      WHERE salon_id = $1 AND id = ANY($2::uuid[])`,
     [salonId, ids],
   );
@@ -123,6 +134,7 @@ export async function listClientNames(
     map.set(row.id, {
       name: row.name,
       kind: row.kind === 'visitante' ? 'visitante' : 'cadastrado',
+      phone: row.phone ?? '',
     });
   }
   return map;
@@ -148,6 +160,62 @@ export async function createVisitorClient(
     [salonId, name, phone, email, input.notes?.trim() || null],
   );
   return mapClient(result.rows[0]);
+}
+
+/** Visitante marcado na agenda: sem conta, com telefone obrigatório. */
+export async function createAgendaVisitor(
+  salonId: string,
+  input: { name: string; phone: string },
+  pool?: Pool,
+): Promise<ClientDTO> {
+  const name = input.name?.trim() ?? '';
+  if (name.length < 2) throw new HttpError(400, 'Informe o nome do visitante.');
+  const phone = requirePhone(input.phone);
+
+  const result = await db(pool).query<ClientRow>(
+    `INSERT INTO clients (salon_id, name, phone, email, notes, user_id, kind)
+     VALUES ($1, $2, $3, NULL, NULL, NULL, 'visitante')
+     RETURNING ${CLIENT_SELECT}`,
+    [salonId, name, phone],
+  );
+  return mapClient(result.rows[0]);
+}
+
+/**
+ * Visitante precisa de telefone de contato.
+ * Sem `rawPhone`, só confere o número já gravado.
+ * Com `rawPhone`, valida e grava.
+ */
+export async function ensureVisitorPhone(
+  salonId: string,
+  clientId: string,
+  rawPhone: string | undefined,
+  pool?: Pool,
+): Promise<ClientDTO | null> {
+  if (!clientId) return null;
+  const result = await db(pool).query<ClientRow>(
+    `SELECT ${CLIENT_SELECT} FROM clients WHERE id = $1 AND salon_id = $2`,
+    [clientId, salonId],
+  );
+  const row = result.rows[0];
+  if (!row || row.kind !== 'visitante') return null;
+
+  const current = mapClient(row);
+  if (rawPhone === undefined) {
+    if (!current.phone) throw new HttpError(400, 'Informe o telefone de contato do visitante.');
+    return null;
+  }
+
+  const phone = requirePhone(rawPhone);
+  if (phone === current.phone) return current;
+
+  const updated = await db(pool).query<ClientRow>(
+    `UPDATE clients SET phone = $3
+     WHERE id = $1 AND salon_id = $2
+     RETURNING ${CLIENT_SELECT}`,
+    [clientId, salonId, phone],
+  );
+  return mapClient(updated.rows[0]);
 }
 
 export async function createClient(
@@ -238,15 +306,18 @@ export async function updateClient(
   const email = normalizeEmail(input.email);
   assertEmail(email, false);
 
-  const current = await db(pool).query<{ user_id: string | null }>(
-    `SELECT user_id FROM clients WHERE id = $1 AND salon_id = $2`,
+  const current = await db(pool).query<{ user_id: string | null; kind: ClientKind | null }>(
+    `SELECT user_id, kind FROM clients WHERE id = $1 AND salon_id = $2`,
     [id, salonId],
   );
   if (!current.rows[0]) throw new HttpError(404, 'Cliente não encontrado.');
 
+  const isVisitor = current.rows[0].kind === 'visitante';
   const phone = current.rows[0].user_id
     ? await requireUniquePhone(input.phone, salonId, pool, current.rows[0].user_id)
-    : optionalPhone(input.phone);
+    : isVisitor
+      ? requirePhone(input.phone)
+      : optionalPhone(input.phone);
 
   try {
     const result = await db(pool).query<ClientRow>(

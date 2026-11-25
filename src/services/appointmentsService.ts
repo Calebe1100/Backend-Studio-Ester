@@ -41,6 +41,18 @@ export type BusySlotDTO = {
 
 export type AppointmentStatus = (typeof APPOINTMENT_STATUSES)[number];
 
+/** Sinal em reais: percentual do preço, arredondado em centavos. Sem preço ou percentual, não há sinal. */
+export function depositAmountFromPrice(
+  price: number | null | undefined,
+  percent: number,
+): number | null {
+  if (price == null || !Number.isFinite(price)) return null;
+  if (!Number.isFinite(percent) || percent <= 0) return null;
+  const cents = Math.round(price * 100);
+  const amount = Math.round((cents * percent) / 100) / 100;
+  return amount > 0 ? amount : null;
+}
+
 export type AppointmentDTO = {
   id: string;
   clientId: string;
@@ -53,6 +65,7 @@ export type AppointmentDTO = {
   notes: string;
   servicePriceSnapshot: number;
   serviceDurationSnapshot: number;
+  depositAmount: number | null;
 };
 
 type AppointmentRow = {
@@ -66,6 +79,7 @@ type AppointmentRow = {
   notes: string | null;
   service_price_snapshot: string | number;
   service_duration_snapshot: number;
+  deposit_amount: string | number | null;
 };
 
 function db(pool?: Pool) {
@@ -85,6 +99,7 @@ function mapAppointment(row: AppointmentRow, timeZone: string): AppointmentDTO {
     notes: row.notes ?? '',
     servicePriceSnapshot: Number(row.service_price_snapshot),
     serviceDurationSnapshot: row.service_duration_snapshot,
+    depositAmount: row.deposit_amount == null ? null : Number(row.deposit_amount),
   };
 }
 
@@ -111,12 +126,16 @@ async function assertNoOverlap(
   }
 }
 
-async function salonClock(salonId: string, pool?: Pool): Promise<{ timeZone: string; cancelLeadMs: number }> {
+async function salonClock(
+  salonId: string,
+  pool?: Pool,
+): Promise<{ timeZone: string; cancelLeadMs: number; depositPercent: number }> {
   const salon = await getSalonById(salonId, pool);
   const minutes = salon?.clientCancelLeadMinutes ?? 120;
   return {
     timeZone: salon?.timezone || DEFAULT_SALON_TIMEZONE,
     cancelLeadMs: minutes * 60 * 1000,
+    depositPercent: salon?.depositPercent ?? 0,
   };
 }
 
@@ -160,9 +179,9 @@ function assertValidTransition(from: AppointmentStatus, to: AppointmentStatus): 
   }
 }
 
-/** O cliente só confirma presença ou cancela o próprio horário. */
+/** O cliente só cancela o próprio horário. A confirmação é da administração. */
 const CLIENT_NEXT_STATUSES: Record<AppointmentStatus, AppointmentStatus[]> = {
-  agendado: ['confirmado', 'cancelado'],
+  agendado: ['cancelado'],
   confirmado: ['cancelado'],
   em_atendimento: [],
   concluido: [],
@@ -192,7 +211,7 @@ export function assertClientStatusChange(
 ): void {
   if (from === to) return;
   if (!CLIENT_NEXT_STATUSES[from].includes(to)) {
-    throw new HttpError(400, 'Você só pode confirmar ou cancelar o próprio agendamento.');
+    throw new HttpError(400, 'Você só pode cancelar o próprio agendamento.');
   }
   if (to === 'cancelado' && startsAt.getTime() - now.getTime() < leadMs) {
     throw new HttpError(400, cancelLeadMessage(leadMs));
@@ -238,7 +257,7 @@ export async function listAppointments(
 
   const result = await db(pool).query<AppointmentRow>(
     `SELECT id, client_id, professional_id, service_id, starts_at, ends_at,
-            status, notes, service_price_snapshot, service_duration_snapshot
+            status, notes, service_price_snapshot, service_duration_snapshot, deposit_amount
      FROM appointments
      WHERE ${clauses.join(' AND ')}
      ORDER BY starts_at ASC`,
@@ -282,7 +301,7 @@ export async function getAppointment(
   const { timeZone } = await salonClock(salonId, pool);
   const result = await db(pool).query<AppointmentRow>(
     `SELECT id, client_id, professional_id, service_id, starts_at, ends_at,
-            status, notes, service_price_snapshot, service_duration_snapshot
+            status, notes, service_price_snapshot, service_duration_snapshot, deposit_amount
      FROM appointments
      WHERE id = $1 AND salon_id = $2`,
     [id, salonId],
@@ -301,11 +320,11 @@ export async function createAppointment(
     notes?: string;
   },
   pool?: Pool,
-  opts?: { conflictMessage?: string },
+  opts?: { conflictMessage?: string; chargeDeposit?: boolean },
 ): Promise<AppointmentDTO> {
   if (!input.clientId) throw new HttpError(400, 'Selecione um cliente.');
   if (!input.date || !input.start) throw new HttpError(400, 'Informe data e horário.');
-  const { timeZone } = await salonClock(salonId, pool);
+  const { timeZone, depositPercent } = await salonClock(salonId, pool);
 
   const client = await db(pool).query(
     `SELECT id FROM clients WHERE id = $1 AND salon_id = $2 AND active = TRUE`,
@@ -329,14 +348,18 @@ export async function createAppointment(
   assertNotInPast(startsAt);
   await assertNoOverlap(professional.id, startsAt, endsAt, undefined, pool, opts?.conflictMessage);
 
+  const depositAmount = opts?.chargeDeposit
+    ? depositAmountFromPrice(service.price, depositPercent)
+    : null;
+
   const result = await db(pool).query<AppointmentRow>(
     `INSERT INTO appointments (
        salon_id, client_id, professional_id, service_id,
        starts_at, ends_at, status,
-       service_price_snapshot, service_duration_snapshot, notes
-     ) VALUES ($1,$2,$3,$4,$5,$6,'agendado',$7,$8,$9)
+       service_price_snapshot, service_duration_snapshot, notes, deposit_amount
+     ) VALUES ($1,$2,$3,$4,$5,$6,'agendado',$7,$8,$9,$10)
      RETURNING id, client_id, professional_id, service_id, starts_at, ends_at,
-               status, notes, service_price_snapshot, service_duration_snapshot`,
+               status, notes, service_price_snapshot, service_duration_snapshot, deposit_amount`,
     [
       salonId,
       input.clientId,
@@ -347,6 +370,7 @@ export async function createAppointment(
       service.price,
       service.durationMinutes,
       input.notes?.trim() || null,
+      depositAmount,
     ],
   );
   return mapAppointment(result.rows[0], timeZone);
@@ -369,7 +393,7 @@ export async function updateAppointment(
   const { timeZone } = await salonClock(salonId, pool);
   const existing = await db(pool).query<AppointmentRow>(
     `SELECT id, client_id, professional_id, service_id, starts_at, ends_at,
-            status, notes, service_price_snapshot, service_duration_snapshot
+            status, notes, service_price_snapshot, service_duration_snapshot, deposit_amount
      FROM appointments WHERE id = $1 AND salon_id = $2`,
     [id, salonId],
   );
@@ -430,7 +454,7 @@ export async function updateAppointment(
        updated_at = NOW()
      WHERE id = $1 AND salon_id = $2
      RETURNING id, client_id, professional_id, service_id, starts_at, ends_at,
-               status, notes, service_price_snapshot, service_duration_snapshot`,
+               status, notes, service_price_snapshot, service_duration_snapshot, deposit_amount`,
     [
       id,
       salonId,
@@ -462,7 +486,7 @@ export async function setAppointmentStatus(
 
   const existing = await db(pool).query<AppointmentRow>(
     `SELECT id, client_id, professional_id, service_id, starts_at, ends_at,
-            status, notes, service_price_snapshot, service_duration_snapshot
+            status, notes, service_price_snapshot, service_duration_snapshot, deposit_amount
      FROM appointments WHERE id = $1 AND salon_id = $2`,
     [id, salonId],
   );
@@ -487,7 +511,7 @@ export async function setAppointmentStatus(
     `UPDATE appointments SET status = $3, updated_at = NOW()
      WHERE id = $1 AND salon_id = $2
      RETURNING id, client_id, professional_id, service_id, starts_at, ends_at,
-               status, notes, service_price_snapshot, service_duration_snapshot`,
+               status, notes, service_price_snapshot, service_duration_snapshot, deposit_amount`,
     [id, salonId, next],
   );
   return mapAppointment(result.rows[0], clock.timeZone);

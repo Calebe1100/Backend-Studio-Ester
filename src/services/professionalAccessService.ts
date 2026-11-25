@@ -120,13 +120,14 @@ type Viewer = {
 export type AppointmentView = Omit<AppointmentDTO, 'servicePriceSnapshot'> & {
   clientName: string;
   clientKind: ClientKind;
+  clientPhone: string;
   servicePriceSnapshot: number | null;
 };
 
 function resolveClient(client: string | ClientSummary | undefined): ClientSummary {
-  if (!client) return { name: 'Cliente', kind: 'cadastrado' };
-  if (typeof client === 'string') return { name: client, kind: 'cadastrado' };
-  return client;
+  if (!client) return { name: 'Cliente', kind: 'cadastrado', phone: '' };
+  if (typeof client === 'string') return { name: client, kind: 'cadastrado', phone: '' };
+  return { ...client, phone: client.phone ?? '' };
 }
 
 /** Omite preço, contato e nome completo conforme a concessão. Dono e recepção não são reduzidos. */
@@ -137,8 +138,12 @@ export function presentAppointment(
 ): AppointmentView {
   const summary = resolveClient(client);
   const fullName = summary.name.trim() || 'Cliente';
+  const showPhone =
+    summary.kind === 'visitante' &&
+    (viewer.role !== 'profissional' || Boolean(viewer.permissions?.clienteContato));
+  const clientPhone = showPhone ? summary.phone : '';
   if (viewer.role !== 'profissional' || !viewer.permissions) {
-    return { ...appointment, clientName: fullName, clientKind: summary.kind };
+    return { ...appointment, clientName: fullName, clientKind: summary.kind, clientPhone };
   }
 
   const own = appointment.professionalId === viewer.professionalId;
@@ -147,8 +152,10 @@ export function presentAppointment(
     ...appointment,
     clientName: showContact ? fullName : firstName(fullName),
     clientKind: summary.kind,
+    clientPhone,
     notes: own || showContact ? appointment.notes : '',
     servicePriceSnapshot: viewer.permissions.precos ? appointment.servicePriceSnapshot : null,
+    depositAmount: viewer.permissions.precos ? appointment.depositAmount : null,
   };
 }
 

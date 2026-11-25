@@ -38,6 +38,8 @@ const salon = {
   frontendOrigins: [],
   clientCancelLeadMinutes: 120,
   active: true,
+  pixKey: null,
+  depositPercent: 0,
 };
 
 describe('POST /api/platform/salons', () => {
